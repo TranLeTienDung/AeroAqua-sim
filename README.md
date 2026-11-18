@@ -24,19 +24,14 @@ Mô hình theo dõi: độ ẩm, gió, hàm lượng nước trong sương, mự
 Starup_Project/
 ├── main.py                 # Mô phỏng 3D (1 lưới) — giao diện Ursina
 ├── simulation.py           # Lõi mô phỏng, độc lập đồ họa
-├── ban_3_luoi/             # Bản cũ: hệ 3 lưới + điều phối (Master Node)
-│   ├── main.py
-│   └── simulation.py
 ├── web/
 │   ├── index.html          # Phiên bản web của mô phỏng
 │   └── aeroaqua-sim.html   # Biến thể (fragment) cùng nội dung
-├── docs/                   # Hướng dẫn sử dụng + ảnh chụp màn hình
-├── Bao-cao-ky-thuat.docx   # Báo cáo kỹ thuật
 ├── Huong-dan-su-dung.docx  # Hướng dẫn sử dụng
 └── requirements.txt
 ```
 
-> Bản **1 lưới** (`main.py` / `simulation.py` ở thư mục gốc) là bản đơn giản hóa, khuyến nghị dùng. Bản **3 lưới** cũ (có Master Node, trọng số ưu tiên, bơm chuyển nước) được giữ trong `ban_3_luoi/`.
+> Bản **1 lưới** (`main.py` / `simulation.py`) là bản đơn giản hóa: 1 lưới thu sương có trục xoay, 1 bồn chứa, 1 vườn — không Master Node, không trọng số ưu tiên, không bơm chuyển nước.
 
 ---
 
@@ -98,6 +93,4 @@ Mọi hằng số thiết kế (diện tích lưới, hiệu suất thu, dung t�
 
 ## 📄 Tài liệu
 
-- Hướng dẫn sử dụng chi tiết: [`docs/Huong_dan_su_dung_AeroAqua.docx`](docs/Huong_dan_su_dung_AeroAqua.docx) và [`Huong-dan-su-dung.docx`](Huong-dan-su-dung.docx)
-- Báo cáo kỹ thuật: [`Bao-cao-ky-thuat.docx`](Bao-cao-ky-thuat.docx)
-- Ảnh chụp màn hình: [`docs/img/`](docs/img/)
+- Hướng dẫn sử dụng: [`Huong-dan-su-dung.docx`](Huong-dan-su-dung.docx)

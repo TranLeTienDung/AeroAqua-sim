@@ -19,3 +19,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Loại khỏi repo nhưng giữ bản local
+ban_3_luoi/
+docs/
+Bao-cao-ky-thuat.docx
