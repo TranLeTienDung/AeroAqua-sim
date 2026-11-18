@@ -1,8 +1,7 @@
 """
 AeroAqua - MÔ PHỎNG 3D, BẢN ĐƠN GIẢN 1 LƯỚI
 ===========================================
-1 lưới thu sương có trục xoay + 1 bồn chứa + 1 vườn. Không Master Node, không
-trọng số ưu tiên, không bơm chuyển nước. (Bản 3 lưới cũ: thư mục ban_3_luoi/.)
+1 lưới thu sương có trục xoay + 1 bồn chứa + 1 vườn.
 
 Chạy:   python main.py
 Tuỳ chọn:

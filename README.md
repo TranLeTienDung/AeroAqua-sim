@@ -33,7 +33,7 @@ Starup_Project/
 └── requirements.txt
 ```
 
-> Bản **1 lưới** (`main.py` / `simulation.py`) là bản đơn giản hóa: 1 lưới thu sương có trục xoay, 1 bồn chứa, 1 vườn — không Master Node, không trọng số ưu tiên, không bơm chuyển nước.
+> Hệ thống gồm 1 lưới thu sương có trục xoay, 1 bồn chứa và 1 vườn, điều khiển hoàn toàn tại chỗ.
 
 ---
 

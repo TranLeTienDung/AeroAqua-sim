@@ -6,8 +6,6 @@ Hệ thống chỉ gồm 1 cụm độc lập:
   * 1 bộ điều khiển (ESP32) đặt ngay tại đế lưới
   * 1 bồn chứa, nước chảy về bằng trọng lực
   * 1 vườn được tưới từ bồn
-KHÔNG có Master Node, KHÔNG có trọng số ưu tiên, KHÔNG bơm chuyển nước giữa
-các bồn. (Bản 3 lưới cũ được giữ trong thư mục ban_3_luoi/.)
 
 Phần "thông minh" còn lại nằm trọn trong bộ điều khiển tại chỗ:
   1. Trục xoay bám hướng gió để đón sương nhiều nhất
