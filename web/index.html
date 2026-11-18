@@ -1,0 +1,1178 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mô phỏng AeroAqua</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Bố cục: bảng điều khiển trạm thu sương. Trên cùng là dải "chuyện gì đang xảy ra" (sương -> lưới -> bồn -> vườn),
+   giữa là cảnh 3D, hai bên là cảm biến/điều khiển và bồn/vườn, dưới là quá khứ + dự báo + nhật ký.
+   Một giao diện tối duy nhất (có chủ đích). Mọi ô số có bề rộng cố định để số chạy không làm xô lệch bố cục. */
+:root {
+  color-scheme: dark;
+  --bg: #0a1420;
+  --panel: #101e2e;
+  --panel-2: #16283b;
+  --line: #24384d;
+  --fg: #e4edf5;
+  --dim: #93a7ba;
+  --accent: #4fd8e6;
+  --water: #3d97f0;
+  --good: #63d98b;
+  --warn: #f5b950;
+  --bad: #ff6f61;
+  --user: #b9a2ff;
+  --font: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px;
+  box-sizing: border-box;
+}
+*, *::before, *::after { box-sizing: border-box; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+h1 { font-size: 18px; font-weight: 700; letter-spacing: .01em; }
+h2 { font-size: 12px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
+h3 { font-size: 15px; font-weight: 600; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Màn hình rộng: cả trang nằm gọn trong MỘT màn hình, không phải cuộn. Cột trái tự cuộn bên trong nếu dài. */
+.app { display: grid; gap: 10px; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "top top" "story story" "left main";
+  height: calc(100vh - 24px); height: calc(100dvh - 24px); min-height: 580px; max-width: 1700px; margin-inline: auto; }
+.top { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; }
+.note { font-size: 12.5px; color: var(--warn); border: 1px solid #6b5320; background: #2a2313; border-radius: 999px; padding: 2px 11px; }
+.clock { margin-left: auto; font-family: var(--mono); font-size: 18px; font-weight: 500; white-space: pre; }
+.state { color: var(--accent); font-size: 13px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0;
+  display: flex; flex-direction: column; gap: 12px; }
+.left { grid-area: left; overflow-y: auto; } .story { grid-area: story; gap: 8px; padding: 10px 14px; }
+.main { grid-area: main; display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.dock { flex: none; gap: 8px; padding: 10px 14px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tabs button { padding: 4px 12px; font-size: 13px; }
+.tabs .tip { margin-left: auto; }
+.tabpane { height: 150px; min-width: 0; }
+.dock.closed .tabpane { display: none; }
+#stats { max-width: 480px; }
+.group { display: flex; flex-direction: column; gap: 12px; }
+.view { flex: 1 1 0; position: relative; min-height: 200px; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--line); background: #0d1826; min-width: 0; }
+.view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
+.view canvas:active { cursor: grabbing; }
+.tag { position: absolute; transform: translate(-50%, -100%); pointer-events: none; white-space: pre; text-align: center;
+  font-family: var(--mono); font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 6px;
+  background: rgba(8, 16, 26, .74); color: var(--fg); }
+.tag.warn { color: var(--warn); }
+.tag.wind { color: var(--accent); }
+.zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; }
+.zoom button { background: rgba(16, 30, 46, .88); }
+.hint { position: absolute; left: 10px; bottom: 10px; font-size: 12px; color: var(--fg); background: rgba(8, 16, 26, .6);
+  padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+.legend { position: absolute; left: 10px; top: 10px; display: grid; gap: 3px; font-size: 12px; background: rgba(8, 16, 26, .7);
+  padding: 7px 10px; border-radius: 8px; pointer-events: none; }
+.legend div { display: flex; align-items: center; gap: 8px; }
+.legend i { display: inline-block; flex: none; width: 18px; }
+.legend .l-wind { height: 2px; background: #fff; }
+.legend .l-fog { height: 10px; border-radius: 5px; background: rgba(235, 240, 245, .7); }
+.legend .l-water { width: 10px; height: 10px; margin-inline: 4px; border-radius: 50%; background: #5cc8ff; }
+.legend .l-arrow { height: 0; width: 0; margin-inline: 3px; border-left: 12px solid var(--accent); border-block: 6px solid transparent; }
+.noweb { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--warn); }
+
+/* bảng nhãn : giá trị. Cột giá trị rộng cố định, không xuống dòng -> số đổi không đẩy bố cục */
+dl.kv { display: grid; grid-template-columns: minmax(0, 1fr) var(--vw, 112px); gap: 3px 10px; margin: 0; }
+dl.kv dt { color: var(--dim); }
+dl.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button { font: inherit; color: var(--fg); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
+  padding: 7px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button[aria-pressed="true"] { background: #14506a; border-color: var(--accent); }
+button.on { background: #17553a; border-color: var(--good); }
+button.off { background: #5a2b28; border-color: var(--bad); }
+button.danger { background: #4a2424; }
+button.primary { background: #0f6b7a; border-color: var(--accent); font-weight: 600; }
+.help { display: inline-flex; align-items: center; gap: 8px; }
+.help b { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #06222a; font-size: 13px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; }
+.row > button { flex: 1 1 auto; }
+.field { display: grid; gap: 2px; }
+.field label { display: flex; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 12.5px; }
+.field output { color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
+input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+details { border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; font-weight: 600; color: var(--warn); }
+details .stack { display: grid; gap: 10px; margin-top: 10px; }
+.small { font-size: 12px; color: var(--dim); margin: 0; }
+
+.meter { position: relative; height: 26px; background: var(--panel-2); border-radius: 6px; overflow: hidden; }
+.meter > i { position: absolute; inset: 0 auto 0 0; background: var(--water); border-radius: 6px 0 0 6px; transition: width .3s linear; }
+.meter > b { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; opacity: .8; }
+.meter > span { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--mono); font-weight: 500; font-size: 12.5px;
+  white-space: pre; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.meter.thin { height: 18px; } .meter.thin > span { font-size: 12px; }
+.status { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 0; width: 100%; }
+
+/* ---- dải "chuyện gì đang xảy ra" ---- */
+.now { margin: 0; font-size: 15px; font-weight: 500; min-height: 1.45em; }
+.now b { color: var(--accent); font-weight: 600; }
+.chain { display: grid; grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr) 48px minmax(0, 1fr) 48px minmax(0, 1fr); align-items: stretch; gap: 6px; }
+.stage { background: var(--panel-2); border: 1px solid var(--line); border-left: 4px solid var(--dim); border-radius: 8px; padding: 9px 12px;
+  display: grid; grid-template-columns: 38px minmax(0, 1fr); column-gap: 10px; align-items: center; min-width: 0; }
+.stage svg { grid-row: 1 / span 3; width: 38px; height: 38px; color: var(--dim); }
+.stage .t { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.stage .v { font-family: var(--mono); font-size: 18px; font-weight: 500; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.stage .s { font-size: 12.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage[data-k="flow"] { border-left-color: var(--accent); } .stage[data-k="flow"] svg { color: var(--accent); }
+.stage[data-k="good"] { border-left-color: var(--good); }   .stage[data-k="good"] svg { color: var(--good); }
+.stage[data-k="warn"] { border-left-color: var(--warn); }   .stage[data-k="warn"] svg { color: var(--warn); }
+.stage[data-k="bad"]  { border-left-color: var(--bad); }    .stage[data-k="bad"] svg { color: var(--bad); }
+.link { height: 8px; border-radius: 4px; background-color: var(--line); align-self: center; }
+.mini { grid-column: 1 / -1; position: relative; height: 6px; margin-top: 7px; background: #0d1826; border-radius: 3px; overflow: hidden; }
+.mini > i { position: absolute; inset: 0 auto 0 0; background: var(--water); transition: width .3s linear; }
+.mini > b { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; opacity: .85; }
+.log details { border: 0; padding: 0; }
+.log summary { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
+.log .logbox { margin-top: 10px; }
+.link.on { background-color: #14344a; background-image: radial-gradient(circle at 5px 4px, var(--accent) 2.6px, transparent 3.2px);
+  background-size: 14px 8px; animation: flowx .7s linear infinite; }
+@keyframes flowx { to { background-position: 14px 0; } }
+@keyframes flowy { to { background-position: 0 14px; } }
+
+
+/* ---- la bàn gió / lưới ---- */
+.compass { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: center; }
+.compass svg { width: 96px; height: 96px; }
+
+.logbox { font-family: var(--mono); font-size: 12.5px; display: grid; grid-auto-rows: 1.5em; height: 10.5em; overflow: hidden; }
+.logbox div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-warn { color: var(--warn); } .k-bad { color: var(--bad); } .k-good { color: var(--good); }
+.k-sum { color: var(--accent); } .k-user { color: var(--user); }
+
+.bars { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; height: 92px; align-items: end;
+  border-bottom: 1px solid var(--dim); }
+.bars .col { height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.bars .col i { display: block; width: 100%; background: var(--water); border-radius: 4px 4px 0 0; min-height: 1px; transition: height .3s linear; }
+.bars .col:hover i { background: var(--accent); }
+.bars .col span { font-size: 11px; color: var(--fg); white-space: nowrap; }
+.ticks { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; font-size: 11px; color: var(--dim); height: 1.4em; }
+.ticks span { white-space: nowrap; }
+.fcgrid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; }
+#hist { width: 100%; height: 124px; display: block; }
+
+/* ---- hướng dẫn sử dụng ---- */
+#tourDim { position: fixed; inset: 0; background: rgba(4, 9, 16, .72); z-index: 50; pointer-events: none; }
+#tourHole { position: fixed; z-index: 50; border: 2px solid var(--accent); border-radius: 10px; pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(4, 9, 16, .72); }
+#tourCard { position: fixed; z-index: 51; width: min(370px, calc(100vw - 24px)); background: #132638; border: 1px solid var(--accent);
+  border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; box-shadow: 0 12px 36px rgba(0, 0, 0, .55); }
+#tourCard .tstep { font-size: 12px; color: var(--accent); letter-spacing: .06em; text-transform: uppercase; }
+#tourCard h3 { font-size: 16px; }
+#tourBody { font-size: 13.5px; max-height: min(56vh, 440px); overflow-y: auto; padding-right: 4px; }
+#tourBody p { margin: 0 0 6px; } #tourBody ul, #tourBody ol { margin: 0; padding-left: 18px; } #tourBody li { margin-bottom: 4px; }
+#tourBody b { color: var(--accent); font-weight: 600; }
+#tourCard .row { margin-top: 4px; }
+.tdots { display: flex; gap: 4px; flex-wrap: wrap; }
+.tdots i { width: 14px; height: 4px; border-radius: 2px; background: var(--line); }
+.tdots i.on { background: var(--accent); }
+
+@media (max-width: 980px) {
+  .app { height: auto; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "top" "story" "main" "left"; }
+  .left { overflow: visible; }
+  .tabpane { height: auto; min-height: 150px; }
+  .tabs .tip { display: none; }
+  .view { flex: none; min-height: 0; aspect-ratio: 4 / 3; max-width: 100%; }
+  .clock { margin-left: 0; }
+  .fcgrid { grid-template-columns: minmax(0, 1fr); }
+  .now { min-height: 4.35em; }
+  .chain { grid-template-columns: minmax(0, 1fr); }
+  .link { width: 8px; height: 18px; justify-self: center; }
+  .link.on { background-image: radial-gradient(circle at 4px 5px, var(--accent) 2.6px, transparent 3.2px); background-size: 8px 14px; animation-name: flowy; }
+}
+@media (prefers-reduced-motion: reduce) { .link.on { animation: none; } .meter > i, .bars .col i { transition: none; } }
+</style>
+<style>body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <h1>AeroAqua · Mô phỏng lưới thu sương</h1>
+    <span class="note">Mô phỏng với số liệu giả định · nước sương chỉ dùng để tưới vườn dâu tây</span>
+    <button type="button" class="primary help" id="btnTour"><b>?</b>Hướng dẫn sử dụng</button>
+    <span class="clock" id="clock">Ngày 1  00:00</span>
+    <span class="state" id="state"></span>
+  </header>
+
+  <section class="panel story" id="story" aria-label="Chuyện gì đang xảy ra">
+    <p class="now" id="nowText"></p>
+    <div class="chain">
+      <div class="stage" id="stFog">
+        <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M5 12c5-4 9 4 14 0s9 4 15 0M5 21c5-4 9 4 14 0s9 4 15 0M5 30c5-4 9 4 14 0s9 4 15 0"/></svg>
+        <span class="t">1 · Sương và gió</span><span class="v"></span><span class="s"></span>
+      </div>
+      <div class="link" id="lk1"></div>
+      <div class="stage" id="stNet">
+        <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="5" width="30" height="20" rx="1.5"/><path d="M15 5v20M25 5v20M5 12h30M5 18.5h30M20 25v11M13 36h14"/></svg>
+        <span class="t">2 · Lưới hứng sương</span><span class="v"></span><span class="s"></span>
+      </div>
+      <div class="link" id="lk2"></div>
+      <div class="stage" id="stTank">
+        <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 9v23c0 2.5 5.4 4.5 12 4.5s12-2 12-4.5V9"/><ellipse cx="20" cy="9" rx="12" ry="4.5"/><path d="M8 21c0 2.5 5.4 4.5 12 4.5s12-2 12-4.5"/></svg>
+        <span class="t">3 · Bồn chứa</span><span class="v"></span><span class="s"></span>
+        <div class="mini" id="tankBar" title="Mức nước trong bồn. Vạch trắng: mức cảnh báo thấp"><i></i><b></b></div>
+      </div>
+      <div class="link" id="lk3"></div>
+      <div class="stage" id="stField">
+        <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12c-7-3-13 1-12 8 1 8 7 14 12 16 5-2 11-8 12-16 1-7-5-11-12-8z"/><path d="M20 12c-2-4-6-5-9-4 2 3 5 5 9 4zM20 12c2-4 6-5 9-4-2 3-5 5-9 4zM20 12V6"/><path d="M15 20v.4M25 20v.4M20 24.5v.4M15.5 28v.4M24.5 28v.4"/></svg>
+        <span class="t">4 · Vườn dâu tây</span><span class="v"></span><span class="s"></span>
+        <div class="mini" id="healthBar" title="Sức khoẻ cây"><i></i></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel left" aria-label="Cảm biến và điều khiển">
+    <div class="group" id="envBox">
+      <h2>Cảm biến đang đo</h2>
+      <dl class="kv" id="env"></dl>
+      <div class="compass">
+        <svg viewBox="-50 -50 100 100" role="img" aria-label="La bàn nhìn từ trên xuống: hướng gió và hướng lưới">
+          <circle r="40" fill="#0d1826" stroke="#24384d" stroke-width="2"/>
+          <text y="-42" text-anchor="middle" font-size="8" fill="#93a7ba" font-family="sans-serif">sống núi</text>
+          <g id="cWind"><path d="M0 38V10" stroke="#4fd8e6" stroke-width="4" stroke-linecap="round"/><path d="M-8 18L0 6l8 12z" fill="#4fd8e6"/></g>
+          <g id="cNet"><path d="M-24 0H24" stroke="#fff" stroke-width="5" stroke-linecap="round"/><circle r="3.5" fill="#93a7ba"/></g>
+        </svg>
+        <p class="small">Nhìn từ trên xuống. <span style="color:var(--accent)">Mũi tên</span> = gió, <span style="color:#fff">thanh trắng</span> = lưới. Lưới nằm ngang trước mũi tên là hứng được nhiều sương nhất.</p>
+      </div>
+    </div>
+    <hr>
+    <div class="group" id="simCtl">
+      <h2>Điều khiển mô phỏng</h2>
+      <div class="row">
+        <button id="btnPause" type="button">Tạm dừng</button>
+        <button id="btnReset" type="button" class="danger">Làm lại từ đầu</button>
+      </div>
+      <div class="field">
+        <label>Tốc độ (phút mô phỏng mỗi giây)</label>
+        <div class="row" id="speeds"></div>
+      </div>
+    </div>
+    <div class="group" id="weather">
+    <div class="field">
+      <label>Kịch bản thời tiết</label>
+      <div class="row" id="scenarios"></div>
+    </div>
+    <div class="group">
+      <div class="field"><label for="sRh">Chỉnh độ ẩm (cộng thêm % RH) <output id="oRh">0</output></label>
+        <input type="range" id="sRh" min="-10" max="5" step="0.5" value="0"></div>
+      <div class="field"><label for="sWind">Hệ số tốc độ gió <output id="oWind">x1.0</output></label>
+        <input type="range" id="sWind" min="0.2" max="4" step="0.1" value="1"></div>
+      <div class="field"><label for="sDir">Hướng gió (0° = thổi lên sống núi) <output id="oDir">0°</output></label>
+        <input type="range" id="sDir" min="-180" max="180" step="5" value="0"></div>
+    </div>
+    </div>
+    <div class="row"><button id="btnRotate" type="button" class="on">Trục xoay: BẬT</button></div>
+    <details id="design">
+      <summary>Chỉnh thông số thiết kế</summary>
+      <div class="stack" id="params"></div>
+      <div class="row" style="margin-top:10px"><button id="btnDefaults" type="button">Về mặc định</button></div>
+      <p class="small" style="margin-top:8px">Ngưỡng quay lại đón sương luôn thấp hơn ngưỡng bảo vệ 2 m/s. Thay đổi có hiệu lực ngay.</p>
+    </details>
+  </section>
+
+  <div class="main">
+  <div class="view" id="view">
+    <canvas id="gl" aria-label="Cảnh 3D: lưới thu sương trên sống núi, bồn chứa và vườn"></canvas>
+    <div class="tag wind" id="tagWind"></div>
+    <div class="tag" id="tagNet"></div>
+    <div class="tag" id="tagTank"></div>
+    <div class="tag" id="tagField"></div>
+    <div class="legend" id="legend">
+      <div><i class="l-wind"></i>Vệt trắng: gió đang thổi</div>
+      <div><i class="l-fog"></i>Mây mờ: sương</div>
+      <div><i class="l-water"></i>Chấm xanh: nước đang chảy</div>
+    </div>
+    <div class="hint">Kéo để xoay · lăn chuột hoặc nút +/− để phóng to</div>
+    <div class="zoom">
+      <button type="button" id="camNear">Gần lưới</button>
+      <button type="button" id="camField">Gần vườn</button>
+      <button type="button" id="camFar">Toàn cảnh</button>
+      <button type="button" id="zIn" aria-label="Phóng to">+</button>
+      <button type="button" id="zOut" aria-label="Thu nhỏ">−</button>
+    </div>
+  </div>
+
+  <section class="panel dock" id="dock" aria-label="Bảng theo dõi">
+    <div class="tabs" id="tabs">
+      <button type="button" data-tab="hist">Mực nước 48 giờ qua</button>
+      <button type="button" data-tab="fc">Dự báo 24 giờ tới</button>
+      <button type="button" data-tab="stats">Kết quả</button>
+      <button type="button" data-tab="log">Nhật ký</button>
+      <span class="small tip">Bấm lại thẻ đang mở để thu gọn</span>
+    </div>
+    <div class="tabpane" id="pane_hist">
+      <canvas id="hist"></canvas>
+      <p class="small">Mực nước trong bồn. Nền sẫm là ban đêm, đường đứt vàng là mức cảnh báo bồn thấp.</p>
+    </div>
+    <div class="tabpane" id="pane_fc" hidden>
+      <div class="fcgrid">
+        <div>
+          <div class="bars" id="bars"></div>
+          <div class="ticks" id="ticks"></div>
+          <div class="small num" id="barRead">Số lít sương dự báo thu được mỗi giờ. Rê chuột lên cột để xem.</div>
+        </div>
+        <dl class="kv" id="fcText"></dl>
+      </div>
+    </div>
+    <div class="tabpane" id="pane_stats" hidden><dl class="kv" id="stats"></dl></div>
+    <div class="tabpane" id="pane_log" hidden><div class="logbox" id="log"></div></div>
+  </section>
+  </div>
+</div>
+
+<div id="tourDim" hidden></div>
+<div id="tourHole" hidden></div>
+<div id="tourCard" role="dialog" aria-labelledby="tourTitle" hidden>
+  <div class="tstep" id="tourStep"></div>
+  <h3 id="tourTitle"></h3>
+  <div id="tourBody"></div>
+  <div class="tdots" id="tourDots"></div>
+  <div class="row">
+    <button type="button" id="tourSkip">Đóng</button>
+    <button type="button" id="tourPrev">Quay lại</button>
+    <button type="button" id="tourNext" class="primary">Tiếp</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+   LÕI MÔ PHỎNG (chuyển từ simulation.py). Mọi hằng số là GIẢ ĐỊNH.
+   ===================================================================== */
+const P = {
+  NET_AREA: 30, NET_EFFICIENCY: 0.20, RH_FOG_START: 92, LWC_MAX: 0.45, PREVAILING: 0,
+  WIND_PROTECT_ON: 12, WIND_PROTECT_OFF: 10, NET_TURN_RATE: 3, NET_DEADBAND: 10,
+  TANK_CAPACITY: 600, TANK_START: 360, TANK_LOW: 0.20, DEMAND_PER_DAY: 170, CROP: "Dâu tây",
+  IRR_FROM: 6, IRR_TO: 18, STRESS_PER_HOUR: 3, RECOVER_PER_HOUR: 0.4, RIVER_WH_PER_L: 0.82,
+  SENSOR_PERIOD: 5, CONTROL_PERIOD: 10, FORECAST_HOURS: 24, PROFILE_ALPHA: 0.4, ANOMALY_TAU_H: 6, K_PRIOR_WEIGHT: 2
+};
+const SCENARIOS = {
+  normal:  { label: "Mùa sương bình thường", short: "Bình thường", d_rh: 0,    d_temp: 0,  wind_mul: 1.0 },
+  drought: { label: "Hạn El Niño",           short: "Hạn El Niño", d_rh: -1.5, d_temp: 2,  wind_mul: 0.9 },
+  storm:   { label: "Gió bão",               short: "Gió bão",     d_rh: 1,    d_temp: -1, wind_mul: 3.2 }
+};
+const clamp = (x, lo, hi) => x < lo ? lo : x > hi ? hi : x;
+const angDiff = (a, b) => ((a - b + 180) % 360 + 360) % 360 - 180;
+const rad = d => d * Math.PI / 180;
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+/* Bộ dự báo: chỉ dùng số đo cảm biến + mực nước bồn, không đọc mô hình thời tiết của mô phỏng. */
+class Forecaster {
+  constructor(sim) {
+    this.rhProf = new Array(24).fill(null); this.windProf = new Array(24).fill(null);
+    this.slot = Math.floor(sim.hour); this.sumRh = 0; this.sumWind = 0; this.cnt = 0;
+    this.kNum = 0; this.kDen = 0; this.idxAcc = 0; this.clean = true; this.prevLevel = null;
+    this.hourly = new Array(P.FORECAST_HOURS).fill(0); this.total6 = 0; this.total24 = 0;
+    this.minutes = 0; this.pending = []; this.scored = []; this.lastIssueHour = -1;
+  }
+  static fogIndex(rh, wind, windDir, autoRotate) {
+    const level = clamp((rh - P.RH_FOG_START) / 6, 0, 1);
+    if (level <= 0) return 0;
+    let facing = 1;
+    if (autoRotate) { if (wind > P.WIND_PROTECT_ON) return 0; }
+    else facing = Math.abs(Math.cos(rad(angDiff(windDir, P.PREVAILING))));
+    return level * wind * facing;
+  }
+  k() { const prior = P.NET_EFFICIENCY * P.LWC_MAX * 3.6 * P.NET_AREA;
+    return (this.kNum + prior * P.K_PRIOR_WEIGHT) / (this.kDen + P.K_PRIOR_WEIGHT); }
+  sample(sim, dt) {
+    this.minutes += dt;
+    const slot = Math.floor(sim.hour);
+    if (slot !== this.slot) {
+      if (this.cnt) for (const [prof, total] of [[this.rhProf, this.sumRh], [this.windProf, this.sumWind]]) {
+        const mean = total / this.cnt, old = prof[this.slot];
+        prof[this.slot] = old === null ? mean : old + P.PROFILE_ALPHA * (mean - old);
+      }
+      this.slot = slot; this.sumRh = 0; this.sumWind = 0; this.cnt = 0;
+    }
+    this.sumRh += sim.rh; this.sumWind += sim.windSpeed; this.cnt++;
+    this.idxAcc += Forecaster.fogIndex(sim.rh, sim.windSpeed, sim.windDir, sim.autoRotate) * dt / 60;
+    if (sim.hour >= P.IRR_FROM && sim.hour < P.IRR_TO) this.clean = false;
+  }
+  onLevelReading(frac) {
+    const prev = this.prevLevel;
+    if (prev !== null && this.clean && this.idxAcc > 0.02 && prev < 0.97 && frac < 0.97) {
+      this.kNum += Math.max(0, frac - prev) * P.TANK_CAPACITY; this.kDen += this.idxAcc;
+    }
+    this.prevLevel = frac; this.idxAcc = 0; this.clean = true;
+  }
+  profile(prof, hour, fallback) {
+    const x = ((hour - 0.5) % 24 + 24) % 24, a = Math.floor(x) % 24, b = (Math.floor(x) + 1) % 24;
+    const va = prof[a] !== null ? prof[a] : fallback, vb = prof[b] !== null ? prof[b] : fallback;
+    return va + (vb - va) * (x - Math.floor(x));
+  }
+  predict(sim) {
+    const now = sim.hour;
+    const dRh = sim.rh - this.profile(this.rhProf, now, sim.rh);
+    const dWind = sim.windSpeed - this.profile(this.windProf, now, sim.windSpeed);
+    const k = this.k();
+    for (let j = 0; j < P.FORECAST_HOURS; j++) {
+      let acc = 0;
+      for (let q = 0; q < 4; q++) {
+        const lead = j + (q + 0.5) / 4, decay = Math.exp(-lead / P.ANOMALY_TAU_H), h = (now + lead) % 24;
+        const rh = this.profile(this.rhProf, h, sim.rh) + dRh * decay;
+        const wind = Math.max(0, this.profile(this.windProf, h, sim.windSpeed) + dWind * decay);
+        acc += Forecaster.fogIndex(rh, wind, sim.windDir, sim.autoRotate);
+      }
+      this.hourly[j] = k * acc / 4;
+    }
+    this.total6 = this.hourly.slice(0, 6).reduce((a, b) => a + b, 0);
+    this.total24 = this.hourly.reduce((a, b) => a + b, 0);
+    while (this.pending.length && this.pending[0][0] <= sim.t) {
+      const [, pred, start] = this.pending.shift();
+      this.scored.push([pred, sim.harvested - start]);
+      if (this.scored.length > 48) this.scored.shift();
+    }
+    const hourId = Math.floor(sim.t / 60);
+    if (hourId !== this.lastIssueHour) { this.lastIssueHour = hourId; this.pending.push([sim.t + 360, this.total6, sim.harvested]); }
+  }
+  accuracy() {
+    if (!this.scored.length) return [0, 0, 0];
+    let err = 0, act = 0;
+    for (const [p, a] of this.scored) { err += Math.abs(p - a); act += a; }
+    return [this.scored.length, err / this.scored.length, act > 1 ? 100 * err / act : 0];
+  }
+}
+
+class Simulation {
+  constructor(o) {
+    o = o || {};
+    this.autoRotate = o.autoRotate !== undefined ? o.autoRotate : true;
+    this.scenario = o.scenario || "normal";
+    this.userDRh = o.userDRh || 0; this.userWindMul = o.userWindMul !== undefined ? o.userWindMul : 1;
+    this.userWindDir = o.userWindDir || 0;
+    this.rand = mulberry32(7); this.spare = null;
+    this.t = 0; this.events = [];
+    this.temp = 18; this.rh = 90; this.windSpeed = 4; this.windDir = 0; this.lwc = 0;
+    this.nRh = 0; this.nWind = 0; this.nDir = 0;
+    this.netYaw = P.PREVAILING; this.protecting = false; this.turning = false; this.harvestLph = 0;
+    this.level = Math.min(P.TANK_START, P.TANK_CAPACITY); this.levelReading = this.frac;
+    this.health = 100; this.irrigationLph = 0; this.missing = false;
+    this.harvested = 0; this.overflow = 0; this.irrigated = 0; this.unmet = 0; this.overloadHours = 0;
+    this.dayStart = [0, 0, 0, 0];
+    this.fogOn = false; this.lowWarned = false; this.emptyWarned = false; this.fullWarned = false; this.shortageDay = -1;
+    this.updateEnv(0);
+    this.fc = new Forecaster(this);
+    this.log("Hệ thống khởi động. Bộ điều khiển bắt đầu đọc cảm biến.", "info");
+  }
+  get hour() { return (this.t / 60) % 24; }
+  get day() { return Math.floor(this.t / 1440) + 1; }
+  get frac() { return this.level / P.TANK_CAPACITY; }
+  clock() { const h = this.hour; return "Ngày " + this.day + "  " + String(Math.floor(h)).padStart(2, "0") + ":" + String(Math.floor(h * 60) % 60).padStart(2, "0"); }
+  log(text, kind) { this.events.push([this.t, text, kind || "info"]); if (this.events.length > 200) this.events.splice(0, 100); }
+  gauss() {
+    if (this.spare !== null) { const v = this.spare; this.spare = null; return v; }
+    let u = 0, v = 0; while (u === 0) u = this.rand(); v = this.rand();
+    const m = Math.sqrt(-2 * Math.log(u)); this.spare = m * Math.sin(2 * Math.PI * v); return m * Math.cos(2 * Math.PI * v);
+  }
+  baseEnv(hour) {
+    const sc = SCENARIOS[this.scenario], s = Math.sin(2 * Math.PI * (hour - 9) / 24);
+    return [18 + 6 * s + sc.d_temp, 84 - 14 * s + sc.d_rh + this.userDRh,
+      Math.max(0, (4 + 1.5 * Math.sin(2 * Math.PI * (hour - 2) / 24)) * sc.wind_mul * this.userWindMul)];
+  }
+  updateEnv(dt) {
+    const k = dt > 0 ? Math.sqrt(dt) : 0;
+    this.nRh += -this.nRh * dt / 180 + this.gauss() * 0.12 * k;
+    this.nWind += -this.nWind * dt / 90 + this.gauss() * 0.07 * k;
+    this.nDir += -this.nDir * dt / 240 + this.gauss() * 1.6 * k;
+    const [temp, rh, wind] = this.baseEnv(this.hour);
+    this.temp = temp; this.rh = clamp(rh + this.nRh, 20, 100);
+    this.windSpeed = Math.max(0, wind * (1 + 0.25 * this.nWind));
+    this.windDir = ((this.userWindDir + this.nDir) % 360 + 360) % 360;
+    this.lwc = clamp((this.rh - P.RH_FOG_START) / 6, 0, 1) * P.LWC_MAX;
+  }
+  step(dt) {
+    const prevT = this.t; this.t += dt; this.updateEnv(dt); this.fc.sample(this, dt);
+    const hrs = dt / 60;
+    // 1) trục xoay. Vùng chết NET_DEADBAND: gió chỉ lệch vài độ thì motor đứng yên (đỡ mòn, lưới không lắc qua lại);
+    //    lệch quá ngưỡng mới quay, và quay tới khi thẳng hướng rồi dừng. Mất tối đa ~1.5% lượng thu (cos 10°).
+    const was = this.protecting; let target;
+    if (this.autoRotate) {
+      if (this.windSpeed > P.WIND_PROTECT_ON) this.protecting = true;
+      else if (this.windSpeed < P.WIND_PROTECT_OFF) this.protecting = false;
+      target = this.windDir + (this.protecting ? 90 : 0);
+    } else { this.protecting = false; target = P.PREVAILING; }
+    const d = angDiff(target, this.netYaw);
+    //    Riêng lúc né gió bão thì bám sát từng độ (không dùng vùng chết) để lưới luôn nằm dọc theo gió.
+    if (this.protecting || this.protecting !== was || Math.abs(d) > P.NET_DEADBAND) this.turning = true;
+    if (this.turning) {
+      this.netYaw = ((this.netYaw + clamp(d, -P.NET_TURN_RATE * dt, P.NET_TURN_RATE * dt)) % 360 + 360) % 360;
+      if (Math.abs(angDiff(target, this.netYaw)) < 0.5) this.turning = false;
+    }
+    if (this.protecting !== was) this.log(this.protecting ? "Gió mạnh -> lưới xoay nghiêng bảo vệ" : "Gió dịu -> lưới quay lại đón sương", this.protecting ? "warn" : "info");
+    // 2) thu sương
+    const facing = Math.abs(Math.cos(rad(angDiff(this.windDir, this.netYaw))));
+    this.facing = facing;
+    this.harvestLph = P.NET_EFFICIENCY * this.lwc * this.windSpeed * P.NET_AREA * facing * 3.6;
+    const got = this.harvestLph * hrs; this.harvested += got; this.level += got;
+    if (this.windSpeed > P.WIND_PROTECT_ON && facing > 0.5) this.overloadHours += hrs;
+    if (!this.fogOn && this.harvestLph > 1) { this.fogOn = true; this.log("Có sương (độ ẩm " + this.rh.toFixed(0) + "%) -> lưới bắt đầu thu nước", "good"); }
+    else if (this.fogOn && this.lwc <= 0) { this.fogOn = false; this.log("Sương tan -> lưới ngừng thu", "info"); }
+    // 3) tưới + sức khoẻ cây
+    this.irrigationLph = 0; this.missing = false;
+    if (this.health > 0 && this.hour >= P.IRR_FROM && this.hour < P.IRR_TO) {
+      const need = P.DEMAND_PER_DAY / (P.IRR_TO - P.IRR_FROM) * hrs * (1 + 0.03 * (this.temp - 20));
+      const give = Math.min(need, this.level);
+      this.level -= give; this.irrigated += give; this.irrigationLph = give / hrs;
+      const miss = need - give; this.unmet += miss;
+      if (miss > 1e-9) {
+        this.missing = true;
+        if (!this.emptyWarned) { this.emptyWarned = true; this.log("Bồn CẠN -> vườn không được tưới đủ!", "bad"); }
+        this.health -= P.STRESS_PER_HOUR * hrs * (miss / need);
+        if (this.health <= 0) { this.health = 0; this.log("Vườn " + P.CROP + ": cây đã chết vì thiếu nước!", "bad"); }
+      } else this.health = Math.min(100, this.health + P.RECOVER_PER_HOUR * hrs);
+    }
+    // 4) tràn bồn + cảnh báo
+    if (this.level > P.TANK_CAPACITY) {
+      this.overflow += this.level - P.TANK_CAPACITY; this.level = P.TANK_CAPACITY;
+      if (!this.fullWarned) { this.fullWarned = true; this.log("Bồn ĐẦY -> nước thu thêm bị tràn bỏ", "warn"); }
+    } else if (this.frac < 0.9) this.fullWarned = false;
+    if (this.frac < P.TANK_LOW && !this.lowWarned) { this.lowWarned = true; this.log("Cảnh báo: bồn còn dưới " + (P.TANK_LOW * 100).toFixed(0) + "%", "warn"); }
+    else if (this.frac > P.TANK_LOW + 0.1) { this.lowWarned = false; this.emptyWarned = false; }
+    // 5) đọc mực nước + dự báo
+    if (Math.floor(this.t / P.SENSOR_PERIOD) !== Math.floor(prevT / P.SENSOR_PERIOD)) { this.levelReading = this.frac; this.fc.onLevelReading(this.levelReading); }
+    if (Math.floor(this.t / P.CONTROL_PERIOD) !== Math.floor(prevT / P.CONTROL_PERIOD)) {
+      this.fc.predict(this);
+      if (this.balance24() < 0 && this.shortageDay !== this.day && this.fc.minutes > 720) {
+        this.shortageDay = this.day; this.log("Dự báo: 24 giờ tới thiếu khoảng " + (-this.balance24()).toFixed(0) + " L nước tưới", "warn");
+      }
+    }
+    // 6) tổng kết ngày
+    if (Math.floor(this.t / 1440) !== Math.floor(prevT / 1440)) {
+      const [h0, i0, o0, u0] = this.dayStart;
+      this.log("Tổng kết ngày " + (this.day - 1) + ": thu " + (this.harvested - h0).toFixed(0) + " L, tưới " + (this.irrigated - i0).toFixed(0) +
+        " L, tràn " + (this.overflow - o0).toFixed(0) + " L, thiếu " + (this.unmet - u0).toFixed(0) + " L", "sum");
+      this.dayStart = [this.harvested, this.irrigated, this.overflow, this.unmet];
+    }
+  }
+  balance24() { return this.levelReading * P.TANK_CAPACITY + this.fc.total24 - (this.health > 0 ? P.DEMAND_PER_DAY : 0); }
+}
+
+/* =====================================================================
+   TRẠNG THÁI CHƯƠNG TRÌNH + GIAO DIỆN
+   ===================================================================== */
+const SPEEDS = [2, 10, 30, 120];
+const HIST_STEP = 10, HIST_MAX = 288;            // 1 điểm / 10 phút mô phỏng, giữ 48 giờ
+const G = { sim: new Simulation(), paused: false, speed: 10, acc: 0, hist: [], tab: "hist" };
+G.hist.push(G.sim.level);
+// số hiển thị được làm mượt để không nhảy loạn theo từng bước mô phỏng
+const D = { wind: G.sim.windSpeed, rh: G.sim.rh, temp: G.sim.temp, harvest: 0, irr: 0 };
+const $ = id => document.getElementById(id);
+const setT = (el, t) => { if (el._t !== t) { el._t = t; el.textContent = t; } };
+const setH = (el, t) => { if (el._t !== t) { el._t = t; el.innerHTML = t; } };
+const setS = (el, prop, v) => { const k = "_s" + prop; if (el[k] !== v) { el[k] = v; el.style[prop] = v; } };
+// bảng nhãn:giá trị dựng MỘT lần, sau đó chỉ đổi chữ trong ô giá trị
+const kvInit = (el, labels) => { el.innerHTML = labels.map(l => "<dt>" + l + "</dt><dd></dd>").join(""); return Array.from(el.querySelectorAll("dd")); };
+const kvSet = (dds, vals) => { for (let i = 0; i < dds.length; i++) setT(dds[i], vals[i]); };
+const padL = (s, n) => String(s).padStart(n, " ");
+
+function refreshButtons() {
+  const s = G.sim;
+  $("btnPause").textContent = G.paused ? "Tiếp tục" : "Tạm dừng";
+  $("btnPause").setAttribute("aria-pressed", G.paused);
+  $("btnRotate").textContent = "Trục xoay tự động: " + (s.autoRotate ? "BẬT" : "TẮT");
+  $("btnRotate").className = s.autoRotate ? "on" : "off";
+  for (const b of $("speeds").children) b.setAttribute("aria-pressed", +b.dataset.v === G.speed);
+  for (const b of $("scenarios").children) b.setAttribute("aria-pressed", b.dataset.v === s.scenario);
+}
+for (const v of SPEEDS) { const b = document.createElement("button"); b.type = "button"; b.dataset.v = v; b.textContent = "x" + v;
+  b.onclick = () => { G.speed = v; refreshButtons(); }; $("speeds").appendChild(b); }
+for (const key in SCENARIOS) { const b = document.createElement("button"); b.type = "button"; b.dataset.v = key; b.textContent = SCENARIOS[key].short;
+  b.onclick = () => { G.sim.scenario = key; G.sim.log("Chuyển kịch bản: " + SCENARIOS[key].label, "user"); refreshButtons(); }; $("scenarios").appendChild(b); }
+$("btnPause").onclick = () => { G.paused = !G.paused; refreshButtons(); };
+$("btnRotate").onclick = () => { const s = G.sim; s.autoRotate = !s.autoRotate;
+  s.log("Người dùng " + (s.autoRotate ? "BẬT trục xoay tự động" : "TẮT trục xoay (lưới cố định)"), "user"); refreshButtons(); };
+$("btnReset").onclick = () => { const o = G.sim;
+  G.sim = new Simulation({ autoRotate: o.autoRotate, scenario: o.scenario, userDRh: o.userDRh, userWindMul: o.userWindMul, userWindDir: o.userWindDir });
+  G.acc = 0; G.hist = [G.sim.level]; D.harvest = 0; D.irr = 0; D.wind = G.sim.windSpeed; D.rh = G.sim.rh; D.temp = G.sim.temp; refreshButtons(); updateUI(); };
+$("sRh").oninput = e => { G.sim.userDRh = +e.target.value; $("oRh").textContent = (+e.target.value > 0 ? "+" : "") + e.target.value; };
+$("sWind").oninput = e => { G.sim.userWindMul = +e.target.value; $("oWind").textContent = "x" + (+e.target.value).toFixed(1); };
+$("sDir").oninput = e => { G.sim.userWindDir = +e.target.value; $("oDir").textContent = e.target.value + "°"; };
+document.addEventListener("keydown", e => {
+  if (tour.on) { if (e.key === "Escape") tourEnd(); else if (e.key === "ArrowRight") tourGo(tour.i + 1); else if (e.key === "ArrowLeft") tourGo(tour.i - 1); }
+  if (e.code === "Space" && !/INPUT|BUTTON|SUMMARY/.test(e.target.tagName)) { e.preventDefault(); $("btnPause").click(); }
+});
+
+// bảng thông số thiết kế: [nhãn, khoá, min, max, bước, hệ số hiển thị, đơn vị]
+const PARAMS = [
+  ["Ngưỡng gió xoay bảo vệ lưới", "WIND_PROTECT_ON", 6, 25, 0.5, 1, " m/s"],
+  ["Tốc độ trục xoay", "NET_TURN_RATE", 0.5, 10, 0.5, 1, " °/phút"],
+  ["Diện tích lưới", "NET_AREA", 10, 80, 2, 1, " m²"],
+  ["Hiệu suất thu của lưới", "NET_EFFICIENCY", 5, 40, 1, 100, " %"],
+  ["Dung tích bồn", "TANK_CAPACITY", 200, 2000, 50, 1, " L"],
+  ["Nhu cầu tưới của vườn", "DEMAND_PER_DAY", 50, 400, 10, 1, " L/ngày"]
+];
+const DEFAULTS = {}; for (const p of PARAMS) DEFAULTS[p[1]] = P[p[1]];
+function setParam(key, shown, k) {
+  P[key] = shown / k;
+  if (key === "WIND_PROTECT_ON") P.WIND_PROTECT_OFF = P[key] - 2;
+  if (key === "TANK_CAPACITY") G.sim.level = Math.min(G.sim.level, P[key]);
+}
+for (const [label, key, lo, hi, step, k, unit] of PARAMS) {
+  const wrap = document.createElement("div"); wrap.className = "field";
+  const fmt = v => (Math.round(v * 10) / 10) + unit;
+  wrap.innerHTML = '<label for="p_' + key + '">' + label + ' <output id="o_' + key + '">' + fmt(P[key] * k) + "</output></label>" +
+    '<input type="range" id="p_' + key + '" min="' + lo + '" max="' + hi + '" step="' + step + '" value="' + P[key] * k + '">';
+  $("params").appendChild(wrap);
+  wrap.querySelector("input").oninput = e => { setParam(key, +e.target.value, k); $("o_" + key).textContent = fmt(+e.target.value); };
+}
+$("btnDefaults").onclick = () => { for (const p of PARAMS) { const inp = $("p_" + p[1]); inp.value = DEFAULTS[p[1]] * p[5]; inp.oninput({ target: inp }); }
+  G.sim.log("Người dùng đưa thông số thiết kế về mặc định", "user"); };
+
+// ---- dựng các phần tĩnh một lần
+const ddEnv = kvInit($("env"), ["Nhiệt độ", "Độ ẩm", "Gió", "Lưới đón gió"]);
+const ddStats = kvInit($("stats"), ["Nước thu từ sương", "Nước đã tưới", "Tràn bồn (lãng phí)", "Thiếu nước tưới", "Lưới hứng gió quá tải", "Điện tiết kiệm so với bơm từ sông"]);
+const ddFc = kvInit($("fcText"), ["Tổng 24 giờ tới", "Bồn sau 24 giờ (ước)", "Sai số dự báo 6 giờ"]);
+const stage = id => { const el = $(id); return { el: el, v: el.querySelector(".v"), s: el.querySelector(".s") }; };
+const ST = { fog: stage("stFog"), net: stage("stNet"), tank: stage("stTank"), field: stage("stField") };
+const logRows = []; for (let i = 0; i < 7; i++) { const d = document.createElement("div"); $("log").appendChild(d); logRows.push(d); }
+const barCols = [];
+for (let j = 0; j < P.FORECAST_HOURS; j++) {
+  const col = document.createElement("div"); col.className = "col"; col.innerHTML = "<span></span><i></i>";
+  col.onmouseenter = col.onclick = () => { $("barRead").textContent = (col.dataset.h || "") + ": dự báo thu " + (col.dataset.v || "0") + " L trong giờ đó"; };
+  $("bars").appendChild(col); barCols.push(col);
+  $("ticks").appendChild(document.createElement("span"));
+}
+const partOfDay = h => h < 5 ? "Đêm khuya" : h < 8 ? "Sáng sớm" : h < 11 ? "Buổi sáng" : h < 14 ? "Buổi trưa" : h < 18 ? "Buổi chiều" : h < 22 ? "Buổi tối" : "Đêm";
+
+function updateUI() {
+  const s = G.sim, fc = s.fc;
+  setT($("clock"), s.clock());
+  setT($("state"), SCENARIOS[s.scenario].label + " · " + (G.paused ? "TẠM DỪNG" : "x" + G.speed + " phút/giây"));
+  const facing = Math.abs(Math.cos(rad(angDiff(s.windDir, s.netYaw))));
+  const harvesting = !s.protecting && D.harvest > 0.5, irrigating = s.irrigationLph > 0;
+  const inIrrHours = s.hour >= P.IRR_FROM && s.hour < P.IRR_TO;
+  const fogWord = s.lwc <= 0 ? "Không sương" : s.lwc < 0.15 ? "Sương mỏng" : "Sương dày";
+
+  // ---- câu kể + chuỗi 4 chặng (chỉ đổi chữ khi trạng thái đổi, không đổi theo từng con số)
+  let story;
+  if (s.protecting) story = "Gió quá mạnh nên <b>lưới tự xoay nghiêng</b> cho gió lướt qua, tránh rách lưới. Tạm ngừng thu nước cho tới khi gió dịu.";
+  else if (harvesting) story = "Gió đang thổi sương xuyên qua lưới. <b>Hạt sương đọng thành giọt</b>, chảy xuống máng rồi theo ống về bồn.";
+  else if (s.lwc > 0) story = "Có sương nhưng " + (facing < 0.5 ? "lưới đang lệch hướng gió" : "gió còn yếu") + " nên <b>thu được rất ít</b>.";
+  else story = "Không khí chưa đủ ẩm để thành sương (cần độ ẩm từ " + P.RH_FOG_START + "% trở lên). <b>Lưới đang chờ sương.</b>";
+  if (s.health <= 0) story += " Vườn đã chết vì thiếu nước, hãy bấm Làm lại từ đầu.";
+  else if (s.missing) story += " <b>Bồn đã cạn</b> nên vườn không được tưới đủ.";
+  else if (irrigating) story += " Bồn đang cấp nước tưới vườn.";
+  else story += " Vườn đang nghỉ tưới.";
+  if (!s.autoRotate) story += " Trục xoay đang TẮT nên lưới đứng yên một hướng.";
+  setH($("nowText"), partOfDay(s.hour) + ". " + story);
+
+  setT(ST.fog.v, fogWord);
+  setT(ST.fog.s, s.windSpeed > P.WIND_PROTECT_ON ? "gió quá mạnh" : s.lwc > 0 ? "gió đang đưa sương tới lưới" : "độ ẩm chưa tới " + P.RH_FOG_START + "%");
+  ST.fog.el.dataset.k = s.windSpeed > P.WIND_PROTECT_ON ? "warn" : s.lwc > 0 ? "flow" : "";
+  setT(ST.net.v, padL(D.harvest.toFixed(1), 5) + " L/giờ");
+  setT(ST.net.s, s.protecting ? "xoay nghiêng né gió mạnh" : harvesting ? "đang hứng sương" : !s.autoRotate ? "đứng yên (trục xoay tắt)" : "đang chờ sương");
+  ST.net.el.dataset.k = s.protecting ? "warn" : harvesting ? "good" : "";
+  const netFlow = D.harvest - D.irr, full = s.frac > 0.995;
+  setT(ST.tank.v, padL(s.level.toFixed(0), 4) + " L · " + padL((s.frac * 100).toFixed(0), 3) + "%");
+  setT(ST.tank.s, full && D.harvest > 0.5 ? "ĐẦY, nước thừa bị tràn bỏ" : s.level < 1 ? "CẠN" : netFlow > 0.5 ? "đang đầy lên" : netFlow < -0.5 ? "đang vơi dần" : "đứng yên");
+  ST.tank.el.dataset.k = s.frac < P.TANK_LOW ? "bad" : full ? "warn" : netFlow > 0.5 ? "good" : "flow";
+  setT(ST.field.v, s.health > 0 ? "Cây khoẻ " + padL(s.health.toFixed(0), 3) + "%" : "Cây đã chết");
+  setT(ST.field.s, s.health <= 0 ? "thiếu nước quá lâu" : s.missing ? "THIẾU NƯỚC TƯỚI" : irrigating ? "đang được tưới " + D.irr.toFixed(0) + " L/giờ" : "nghỉ tưới (tưới " + P.IRR_FROM + "h–" + P.IRR_TO + "h)");
+  ST.field.el.dataset.k = s.health <= 0 || s.missing ? "bad" : s.health < 60 ? "warn" : "good";
+  $("lk1").classList.toggle("on", s.lwc > 0 && s.windSpeed > 0.3);
+  $("lk2").classList.toggle("on", harvesting);
+  $("lk3").classList.toggle("on", irrigating);
+
+  const top = Math.max(Math.max.apply(null, fc.hourly), 2), h0 = Math.floor(s.hour);
+  // ---- cảm biến + la bàn
+  kvSet(ddEnv, [D.temp.toFixed(1) + " °C", D.rh.toFixed(0) + " %", D.wind.toFixed(1) + " m/s · " + s.windDir.toFixed(0) + "°", (facing * 100).toFixed(0) + " %"]);
+  $("cWind").setAttribute("transform", "rotate(" + s.windDir.toFixed(0) + ")");
+  $("cNet").setAttribute("transform", "rotate(" + s.netYaw.toFixed(0) + ")");
+
+  // ---- thanh mức bồn + sức khoẻ cây (nằm ngay trong ô 3 và ô 4) + kết quả
+  const tb = $("tankBar"), hb = $("healthBar");
+  setS(tb.children[0], "width", (s.frac * 100).toFixed(1) + "%");
+  setS(tb.children[0], "background", s.frac < P.TANK_LOW ? "var(--bad)" : "var(--water)");
+  setS(tb.children[1], "left", (P.TANK_LOW * 100) + "%");
+  setS(hb.children[0], "width", s.health.toFixed(1) + "%");
+  setS(hb.children[0], "background", s.health > 60 ? "var(--good)" : s.health > 25 ? "var(--warn)" : "var(--bad)");
+  kvSet(ddStats, [s.harvested.toFixed(0) + " L", s.irrigated.toFixed(0) + " L", s.overflow.toFixed(0) + " L", s.unmet.toFixed(0) + " L",
+    s.overloadHours.toFixed(1) + " giờ", (s.irrigated * P.RIVER_WH_PER_L).toFixed(0) + " Wh"]);
+
+  // ---- nhật ký: 7 dòng cố định
+  const ev = s.events.slice(-7);
+  for (let i = 0; i < 7; i++) { const e = ev[i], row = logRows[i];
+    if (!e) { setT(row, ""); continue; }
+    const hh = (e[0] / 60) % 24;
+    const txt = "[N" + (Math.floor(e[0] / 1440) + 1) + " " + String(Math.floor(hh)).padStart(2, "0") + ":" + String(Math.floor(hh * 60) % 60).padStart(2, "0") + "] " + e[1];
+    setT(row, txt); if (row._k !== e[2]) { row._k = e[2]; row.className = "k-" + e[2]; row.title = txt; } }
+
+  // ---- dự báo
+  let jmax = 0; for (let j = 1; j < fc.hourly.length; j++) if (fc.hourly[j] > fc.hourly[jmax]) jmax = j;
+  barCols.forEach((col, j) => {
+    setS(col.children[1], "height", (82 * fc.hourly[j] / top).toFixed(0) + "%");
+    setT(col.children[0], j === jmax && fc.hourly[j] >= 0.5 ? fc.hourly[j].toFixed(0) + " L" : "");
+    col.dataset.v = fc.hourly[j].toFixed(1); col.dataset.h = String((h0 + j) % 24).padStart(2, "0") + "h";
+    setT($("ticks").children[j], j % 3 === 0 ? (j === 0 ? "nay" : String((h0 + j) % 24).padStart(2, "0") + "h") : "");
+  });
+  const [cnt, mae, pct] = fc.accuracy(), bal = s.balance24();
+  kvSet(ddFc, [fc.total24.toFixed(0) + " L", (bal >= 0 ? "dư " : "THIẾU ") + Math.abs(bal).toFixed(0) + " L", cnt ? pct.toFixed(0) + "% · TB " + mae.toFixed(0) + " L" : "cần 6 giờ"]);
+  drawHist();
+}
+
+/* ---- biểu đồ mực nước bồn 48 giờ qua (canvas 2D) ---- */
+function drawHist() {
+  const c = $("hist"), w = c.clientWidth, h = c.clientHeight; if (!w || !h) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const L = 44, R = 8, T = 8, B = 20, pw = w - L - R, ph = h - T - B, s = G.sim, span = HIST_MAX * HIST_STEP;
+  const X = age => L + pw * (1 - age / span), Y = lit => T + ph * (1 - clamp(lit / P.TANK_CAPACITY, 0, 1));
+  // nền đêm
+  g.fillStyle = "#0b1622"; g.fillRect(L, T, pw, ph);
+  g.fillStyle = "#16283b";
+  for (let t = Math.floor(s.t / 60) * 60 + 60; t > s.t - span - 60; t -= 60) {
+    const hr = ((t - 60) / 60 % 24 + 24) % 24; if (hr >= 6 && hr < 18) {
+      const x0 = Math.max(L, X(s.t - (t - 60))), x1 = Math.min(L + pw, X(s.t - t)); if (x1 > x0) g.fillRect(x0, T, x1 - x0, ph); }
+  }
+  g.font = "11px 'Be Vietnam Pro', 'Segoe UI', sans-serif"; g.fillStyle = "#93a7ba"; g.textBaseline = "middle"; g.textAlign = "right";
+  for (const f of [0, 0.5, 1]) { g.fillText((P.TANK_CAPACITY * f).toFixed(0) + " L", L - 6, Y(P.TANK_CAPACITY * f));
+    g.strokeStyle = "#24384d"; g.lineWidth = 1; g.beginPath(); g.moveTo(L, Y(P.TANK_CAPACITY * f)); g.lineTo(L + pw, Y(P.TANK_CAPACITY * f)); g.stroke(); }
+  g.textBaseline = "alphabetic"; g.textAlign = "left"; g.fillText("48 giờ trước", L, h - 5);
+  g.textAlign = "center"; g.fillText("24 giờ trước", L + pw / 2, h - 5); g.textAlign = "right"; g.fillText("bây giờ", L + pw, h - 5);
+  g.strokeStyle = "#f5b950"; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(L, Y(P.TANK_CAPACITY * P.TANK_LOW)); g.lineTo(L + pw, Y(P.TANK_CAPACITY * P.TANK_LOW)); g.stroke(); g.setLineDash([]);
+  const n = G.hist.length, tail = s.t % HIST_STEP;
+  g.beginPath();
+  for (let i = 0; i < n; i++) { const x = X((n - 1 - i) * HIST_STEP + tail), y = Y(G.hist[i]); if (i) g.lineTo(x, y); else g.moveTo(x, y); }
+  g.lineTo(X(0), Y(s.level));
+  g.strokeStyle = "#3d97f0"; g.lineWidth = 2; g.lineJoin = "round"; g.stroke();
+  g.lineTo(X(0), T + ph); g.lineTo(X((n - 1) * HIST_STEP + tail), T + ph); g.closePath(); g.fillStyle = "rgba(61, 151, 240, .22)"; g.fill();
+  g.beginPath(); g.arc(X(0), Y(s.level), 4, 0, 7); g.fillStyle = "#e4edf5"; g.fill();
+}
+
+/* =====================================================================
+   HƯỚNG DẪN SỬ DỤNG: đi từng bước, khoanh sáng từng khu vực.
+   Trang vẫn bấm được trong lúc hướng dẫn để người xem thử ngay.
+   ===================================================================== */
+/* ---- các thẻ theo dõi dưới cảnh 3D: mỗi lần mở một thẻ; bấm lại thẻ đang mở thì thu gọn ---- */
+const TABS = ["hist", "fc", "stats", "log"];
+function showTab(name, keepOpen) {
+  const dock = $("dock"), wasClosed = dock.classList.contains("closed");
+  if (!keepOpen && G.tab === name && !wasClosed) dock.classList.add("closed");
+  else { G.tab = name; dock.classList.remove("closed"); }
+  const closed = dock.classList.contains("closed");
+  for (const b of $("tabs").querySelectorAll("button")) b.setAttribute("aria-pressed", !closed && b.dataset.tab === G.tab);
+  for (const n of TABS) $("pane_" + n).hidden = n !== G.tab;
+  drawHist();
+}
+for (const b of $("tabs").querySelectorAll("button")) b.onclick = () => showTab(b.dataset.tab);
+
+const TOUR = [
+  { title: "Mô phỏng trạm thu sương AeroAqua",
+    html: "<p>Trang này mô phỏng việc thu nước từ sương để tưới vườn dâu tây, qua 4 khâu:</p><ol><li>Gió đưa <b>sương</b> đến lưới.</li><li><b>Lưới</b> giữ sương lại thành nước.</li><li>Nước chảy về <b>bồn</b>.</li><li>Bồn cấp nước tưới <b>vườn dâu tây</b>.</li></ol><p><b>Lưu ý:</b> mọi số liệu là giả định, chưa phải số đo thực tế.</p>" },
+
+  { sel: "#nowText", title: "Dòng trạng thái",
+    html: "<p>Tóm tắt hệ thống đang làm gì ngay lúc này: lưới đang thu sương, đang chờ hay đang né gió; vườn đang được tưới hay đang nghỉ.</p>" },
+
+  { sel: "#stFog", title: "Ô 1 · Sương và gió",
+    html: "<p>Cho biết hiện có sương hay không.</p><ul><li>Sương xuất hiện khi độ ẩm đạt 92%, thường vào ban đêm và sáng sớm.</li><li>Chấm xanh chạy sang ô 2: gió đang đưa sương đến lưới.</li></ul>" },
+
+  { sel: "#stNet", title: "Ô 2 · Lưới hứng sương",
+    html: "<p>Cho biết lưới đang thu được bao nhiêu lít nước mỗi giờ.</p><ul><li>Sương càng dày và gió càng đều thì thu càng nhiều.</li><li>Viền vàng: gió quá mạnh, lưới đang né và tạm ngừng thu.</li></ul>" },
+
+  { sel: "#stTank", title: "Ô 3 · Bồn chứa",
+    html: "<p>Cho biết bồn còn bao nhiêu nước và đang đầy lên hay vơi đi.</p><ul><li>Thanh ngang là mức nước; vạch trắng là mức cảnh báo thấp.</li><li>Viền đỏ: bồn sắp cạn.</li></ul>" },
+
+  { sel: "#stField", title: "Ô 4 · Vườn dâu tây",
+    html: "<p>Cho biết sức khoẻ của cây.</p><ul><li>Vườn được tưới từ 6h đến 18h mỗi ngày.</li><li>Bồn cạn trong giờ tưới thì sức khoẻ cây giảm; được tưới đủ thì hồi lại.</li></ul>" },
+
+  { sel: "#view", title: "Cảnh 3D",
+    html: "<p>Hình ảnh lưới trên sống núi, bồn chứa và vườn dâu tây.</p><ul><li><b>Mũi tên</b>: hướng gió.</li><li><b>Vệt trắng</b>: gió đang thổi.</li><li><b>Mây mờ</b>: sương.</li><li><b>Chấm xanh</b>: nước đang chảy.</li></ul>" },
+
+  { sel: ".zoom", title: "Điều khiển góc nhìn",
+    html: "<ul><li>Kéo chuột trên cảnh để xoay góc nhìn.</li><li>Lăn chuột hoặc bấm + / − để phóng to, thu nhỏ.</li><li>Bấm Gần lưới, Gần vườn hoặc Toàn cảnh để chuyển nhanh góc nhìn.</li></ul>" },
+
+  { sel: "#simCtl", title: "Điều khiển thời gian",
+    html: "<ul><li><b>Tạm dừng</b>: dừng hoặc chạy tiếp mô phỏng.</li><li><b>Tốc độ</b>: số càng lớn, thời gian trôi càng nhanh. x120 dùng để xem kết quả nhiều ngày.</li><li><b>Làm lại từ đầu</b>: đưa bồn và vườn về trạng thái ban đầu.</li></ul>" },
+
+  { sel: "#scenarios", up: true, title: "Kịch bản thời tiết",
+    html: "<p>Ba tình huống thời tiết dựng sẵn:</p><ul><li><b>Bình thường</b>: có sương về đêm.</li><li><b>Hạn El Niño</b>: khô và nóng hơn, ít sương.</li><li><b>Gió bão</b>: gió rất mạnh, lưới phải né.</li></ul>" },
+
+  { sel: "#sRh", up: true, title: "Thanh trượt · Độ ẩm",
+    html: "<p>Tăng hoặc giảm độ ẩm không khí. Kéo sang phải thì có nhiều sương hơn, kéo sang trái thì sương ít đi.</p>" },
+
+  { sel: "#sWind", up: true, title: "Thanh trượt · Tốc độ gió",
+    html: "<p>Làm gió mạnh lên hoặc yếu đi. Gió mạnh đưa nhiều sương qua lưới hơn, nhưng gió quá mạnh thì lưới phải né.</p>" },
+
+  { sel: "#sDir", up: true, title: "Thanh trượt · Hướng gió",
+    html: "<p>Đổi hướng gió thổi. Khi trục xoay bật, lưới tự xoay theo hướng gió mới.</p>" },
+
+  { sel: "#btnRotate", title: "Trục xoay tự động",
+    html: "<p>Điểm khác biệt của AeroAqua so với lưới cố định.</p><ul><li><b>BẬT</b>: lưới tự xoay đối mặt với gió để thu nhiều sương nhất, và tự né khi gió quá mạnh.</li><li><b>TẮT</b>: lưới đứng yên một hướng, dùng để so sánh.</li></ul>" },
+
+  { sel: "#design", before: () => { $("design").open = true; }, title: "Thông số thiết kế",
+    html: "<p>Các thanh trượt để thử phương án thiết kế khác: kích thước và hiệu suất lưới, dung tích bồn, nhu cầu tưới, mức gió mà lưới bắt đầu né.</p><p>Thay đổi có hiệu lực ngay. Bấm <b>Về mặc định</b> để trả lại giá trị ban đầu.</p>" },
+
+  { sel: "#env", title: "Cảm biến",
+    html: "<p>Các số đo hiện tại của trạm: nhiệt độ, độ ẩm, gió.</p><p><b>Lưới đón gió</b> càng gần 100% thì lưới càng đối mặt với gió và thu càng tốt.</p>" },
+
+  { sel: ".compass", title: "La bàn",
+    html: "<p>Nhìn từ trên xuống: mũi tên là hướng gió, thanh trắng là lưới.</p><p>Thanh trắng chắn ngang mũi tên là lưới đang đón gió. Thanh trắng nằm dọc theo mũi tên là lưới đang né gió.</p>" },
+
+  { sel: "#dock", before: () => showTab("hist", true), title: "Thẻ · Mực nước 48 giờ qua",
+    html: "<p>Đồ thị lượng nước trong bồn trong 2 ngày gần nhất. Đường đi lên là bồn đang nhận nước, đi xuống là đang tưới.</p><p>Bấm lại tên thẻ đang mở để thu gọn bảng.</p>" },
+
+  { sel: "#dock", before: () => showTab("fc", true), title: "Thẻ · Dự báo 24 giờ tới",
+    html: "<p>Lượng nước dự kiến thu được trong từng giờ sắp tới, và bồn dự kiến dư hay thiếu sau 24 giờ.</p><p>Dự báo cần chạy khoảng 1 ngày mới ổn định.</p>" },
+
+  { sel: "#dock", before: () => showTab("stats", true), title: "Thẻ · Kết quả",
+    html: "<p>Tổng kết từ lúc bắt đầu: nước đã thu, đã tưới, bị tràn, bị thiếu, và thời gian lưới chịu gió quá tải.</p><p>Dùng để so sánh giữa các phương án.</p>" },
+
+  { sel: "#dock", before: () => showTab("log", true), title: "Thẻ · Nhật ký",
+    html: "<p>Danh sách các sự kiện mới nhất, dòng mới ở dưới cùng. Đầu mỗi dòng là thời điểm: [N2 06:15] = ngày 2, lúc 06:15.</p><ul><li><span class='k-good'>Xanh lá</span>: bắt đầu thu được sương.</li><li><span class='k-warn'>Vàng</span>: cảnh báo.</li><li><span class='k-bad'>Đỏ</span>: sự cố.</li><li><span class='k-sum'>Xanh lơ</span>: tổng kết cuối ngày.</li><li><span class='k-user'>Tím</span>: thao tác của người dùng.</li></ul>" },
+
+  { title: "Ba thử nghiệm gợi ý",
+    html: "<ol><li><b>Bão</b>: chọn Gió bão để thấy lưới né gió. Sau đó tắt trục xoay để so sánh.</li><li><b>Hạn</b>: chọn Hạn El Niño ở tốc độ x120 để thấy bồn cạn và cây yếu đi.</li><li><b>Thiết kế</b>: tăng diện tích lưới và xem bồn có bị tràn không.</li></ol><p>Để xem lại, bấm nút <b>Hướng dẫn sử dụng</b> ở góc trên.</p>" }
+];
+const tour = { on: false, i: 0, target: null };
+$("tourDots").innerHTML = TOUR.map(() => "<i></i>").join("");
+function tourGo(i) {
+  if (i < 0) return; if (i >= TOUR.length) return tourEnd();
+  const st = TOUR[i]; tour.on = true; tour.i = i;
+  if (st.before) st.before();
+  tour.target = st.sel ? document.querySelector(st.sel) : null;
+  if (tour.target && st.up) tour.target = tour.target.parentElement;
+  $("tourStep").textContent = "Bước " + (i + 1) + " / " + TOUR.length;
+  $("tourTitle").textContent = st.title; $("tourBody").innerHTML = st.html;
+  Array.from($("tourDots").children).forEach((d, j) => d.classList.toggle("on", j <= i));
+  $("tourPrev").disabled = i === 0; $("tourPrev").style.opacity = i === 0 ? 0.4 : 1;
+  $("tourNext").textContent = i === TOUR.length - 1 ? "Xong" : "Tiếp";
+  $("tourCard").hidden = false; $("tourDim").hidden = !!tour.target; $("tourHole").hidden = !tour.target;
+  if (tour.target) { const r = tour.target.getBoundingClientRect();
+    tour.target.scrollIntoView({ block: r.height > window.innerHeight * 0.7 ? "start" : "center", behavior: "smooth" }); }
+  tourPlace(); $("tourNext").focus({ preventScroll: true });
+}
+function tourEnd() {
+  tour.on = false; $("tourCard").hidden = true; $("tourDim").hidden = true; $("tourHole").hidden = true;
+  try { localStorage.setItem("aeroaqua_tour_seen", "1"); } catch (e) {}
+  $("btnTour").focus({ preventScroll: true });
+}
+function tourPlace() {
+  if (!tour.on) return;
+  const card = $("tourCard"), vw = window.innerWidth, vh = window.innerHeight, cw = card.offsetWidth, ch = card.offsetHeight, m = 12;
+  let left, top;
+  if (!tour.target) { left = (vw - cw) / 2; top = Math.max(m, (vh - ch) / 2); }
+  else {
+    const r = tour.target.getBoundingClientRect(), hole = $("tourHole").style, pad = 6;
+    hole.left = (r.left - pad) + "px"; hole.top = (r.top - pad) + "px"; hole.width = (r.width + 2 * pad) + "px"; hole.height = (r.height + 2 * pad) + "px";
+    const fitY = y => clamp(y, m, Math.max(m, vh - ch - m)), fitX = x => clamp(x, m, Math.max(m, vw - cw - m));
+    if (r.right + m + cw + m <= vw) { left = r.right + m + pad; top = fitY(r.top); }
+    else if (r.left - m - cw - m >= 0) { left = r.left - m - pad - cw; top = fitY(r.top); }
+    else if (r.bottom + m + ch + m <= vh) { left = fitX(r.left + r.width / 2 - cw / 2); top = r.bottom + m + pad; }
+    else if (r.top - m - ch - m >= 0) { left = fitX(r.left + r.width / 2 - cw / 2); top = r.top - m - pad - ch; }
+    else { left = fitX(vw - cw - m); top = fitY(vh); }
+  }
+  card.style.left = Math.round(left) + "px"; card.style.top = Math.round(top) + "px";
+}
+$("btnTour").onclick = () => tourGo(0);
+$("tourNext").onclick = () => tourGo(tour.i + 1);
+$("tourPrev").onclick = () => tourGo(tour.i - 1);
+$("tourSkip").onclick = tourEnd;
+
+/* =====================================================================
+   CẢNH 3D (Three.js). Toạ độ mô phỏng: x phải, y lên, z về phía sống núi.
+   Three.js thuận tay phải nên đảo dấu z khi dựng.
+   ===================================================================== */
+const view = $("view"), canvas = $("gl");
+let renderer = null;
+try { renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true }); } catch (e) { renderer = null; }
+const RIDGE_Z = 34, NET_X = -4, NET_Z = 28, TANK = [9, 17], FX = [-14, 14], FZ = [-12, 9];
+const ground = (x, z) => { const ridge = 16 * Math.exp(-Math.pow((z - RIDGE_Z) / 30, 2));
+  return ridge + 1.2 * Math.sin(0.09 * x + 1) * Math.cos(0.08 * z) * (ridge / 16 + 0.1); };
+const V = (x, y, z) => new THREE.Vector3(x, y, -z);
+const gp = (x, z, dy) => V(x, ground(x, z) + (dy || 0), z);
+let scene, camera, sun, amb, U = null, fogSprites = [], fogMat, terrainMat;
+// đường đi của nước: danh sách điểm -> lấy vị trí theo quãng đường (dùng cả lúc dựng cảnh lẫn lúc vẽ từng khung hình)
+const makePath = pts => { const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1])); return { pts: pts, cum: cum, len: cum[cum.length - 1] }; };
+const pathAt = (p, dist, out) => { let i = 1; while (i < p.cum.length - 1 && p.cum[i] < dist) i++;
+  return out.copy(p.pts[i - 1]).lerp(p.pts[i], (dist - p.cum[i - 1]) / Math.max(1e-6, p.cum[i] - p.cum[i - 1])); };
+const CAM_FAR = V(0, 4, 12);
+const cam = { yaw: 0, pitch: 37, zoom: 1, target: CAM_FAR.clone() };
+
+if (renderer) {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  scene = new THREE.Scene(); scene.background = new THREE.Color(0x8cbee8);
+  camera = new THREE.PerspectiveCamera(32, 1.6, 1, 900);
+  sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(-40, 80, 45); scene.add(sun);
+  amb = new THREE.AmbientLight(0xffffff, 0.55); scene.add(amb);
+
+  const lam = (c, o) => new THREE.MeshLambertMaterial(Object.assign({ color: c }, o || {}));
+  const add = (mesh, pos, parent) => { if (pos) mesh.position.copy(pos); (parent || scene).add(mesh); return mesh; };
+  const box = (w, h, d, c, pos, parent) => add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lam(c)), pos, parent);
+  const cyl = (r, h, c, pos, parent, o) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 24), lam(c, o));
+    add(m, pos, parent); m.position.y += h / 2; return m; };
+  const seg = (a, b, th, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(th, th, a.distanceTo(b)), mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5); m.lookAt(b); scene.add(m); return m; };
+  const dropMat = new THREE.MeshBasicMaterial({ color: 0x5cc8ff });
+  const makeDrops = (n, r, parent) => { const geo = new THREE.SphereGeometry(r, 10, 8), arr = [];
+    for (let i = 0; i < n; i++) { const m = new THREE.Mesh(geo, dropMat); m.visible = false; (parent || scene).add(m); arr.push(m); } return arr; };
+
+  // ---- địa hình
+  (function () {
+    const step = 3, nx = 53, nz = 45, pos = [], col = [], idx = [];
+    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+      const x = -78 + i * step, z = -60 + j * step, y = ground(x, z), t = Math.min(1, y / 16);
+      let r = 70 + 50 * t, g = 120 + 30 * t, b = 62 + 20 * t;
+      if (x >= FX[0] - 1 && x <= FX[1] + 1 && z >= FZ[0] - 1 && z <= FZ[1] + 1) { r = 118; g = 92; b = 66; }
+      if (z < -46) { r = 150; g = 140; b = 110; }
+      pos.push(x, y, -z); col.push(r / 255, g / 255, b / 255);
+    }
+    for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) { const a = j * nx + i; idx.push(a, a + 1, a + nx, a + 1, a + nx + 1, a + nx); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    geo.setIndex(idx); geo.computeVertexNormals();
+    terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    scene.add(new THREE.Mesh(geo, terrainMat));
+    box(160, 0.1, 9, 0x3c78be, V(0, 0.25, -53));
+  })();
+
+  // ---- cụm lưới + bồn + vườn
+  U = (function () {
+    const STEEL = 0xc8cdd2, DARK = 0x464b52, base = gp(NET_X, NET_Z), u = {};
+    const off = (p, x, y, z) => p.clone().add(V(x, y, z));
+    u.base = base;
+    box(4.8, 0.8, 3.8, 0x969696, off(base, 0, 0.4, 0));
+    const solar = box(2.2, 0.08, 1.3, 0x192d6e, off(base, -0.6, 1.15, -1.15)); solar.rotation.x = rad(25);
+    box(0.9, 1.2, 0.6, 0xebebe1, off(base, 1.6, 1.4, -1.0));                       // hộp ESP32
+    u.led = add(new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12), new THREE.MeshBasicMaterial({ color: 0x5a5a5a })), off(base, 1.6, 1.7, -1.35));
+    cyl(0.38, 1.8, DARK, off(base, 0, 0.8, 0)); cyl(0.75, 0.5, DARK, off(base, 0, 1.9, 0)); cyl(1.05, 0.3, 0x696e76, off(base, 0, 2.4, 0));
+    box(0.9, 0.55, 0.55, 0x285aaa, off(base, 1.0, 1.75, 0.3));                      // motor
+    u.pivot = new THREE.Group(); u.pivot.position.copy(off(base, 0, 6.6, 0)); scene.add(u.pivot);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 7.7, 16), lam(STEEL)); pole.position.y = -0.05; u.pivot.add(pole);
+    // hoạ tiết mắt lưới
+    const tc = document.createElement("canvas"); tc.width = tc.height = 32; const g2 = tc.getContext("2d");
+    g2.fillStyle = "#ffffff"; g2.fillRect(0, 0, 32, 32); g2.strokeStyle = "#5d7480"; g2.lineWidth = 3; g2.strokeRect(0, 0, 32, 32);
+    const tex = new THREE.CanvasTexture(tc); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(14, 15);
+    u.netMat = new THREE.MeshBasicMaterial({ map: tex, color: 0x1e5f7d, side: THREE.DoubleSide, transparent: true, opacity: 0.93 });
+    for (const side of [-1, 1]) {
+      const cx = side * 2.95;
+      const net = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 6), u.netMat); net.position.set(cx, 0, 0); u.pivot.add(net);
+      for (let k = 0; k < 4; k++) { box(0.13, 6.1, 0.16, STEEL, new THREE.Vector3(cx - 2.7 + k * 1.8, 0, 0), u.pivot);
+        box(5.5, 0.13, 0.16, STEEL, new THREE.Vector3(cx, 3 - k * 2, 0), u.pivot); }
+    }
+    box(12.3, 0.4, 0.85, 0xaaafb4, new THREE.Vector3(0, -3.35, 0), u.pivot);        // máng hứng
+    // giọt nước lăn trên lưới (gắn vào trục nên xoay cùng lưới)
+    u.netDrops = makeDrops(44, 0.15, u.pivot);
+    u.netDrops.forEach((m, i) => { m.userData = { v: 1.6 + Math.random() * 1.6 };
+      m.position.set((i % 2 ? 1 : -1) * (0.4 + Math.random() * 5.1), -3 + Math.random() * 6, i % 4 < 2 ? 0.14 : -0.14); });
+    // cảm biến trên đỉnh trụ
+    const top = off(base, 0, 10.4, 0);
+    box(0.08, 0.5, 0.08, DARK, top); box(1.9, 0.08, 0.08, DARK, off(top, 0, 0.25, 0)); box(0.3, 0.4, 0.3, 0xf0f0f0, off(top, 0, 0.5, 0));
+    u.vane = new THREE.Group(); u.vane.position.copy(off(top, -0.9, 0.55, 0)); scene.add(u.vane);
+    box(0.08, 0.08, 1.5, 0x282828, null, u.vane); box(0.06, 0.5, 0.5, 0xdc3c32, new THREE.Vector3(0, 0, 0.75), u.vane);
+    u.cups = new THREE.Group(); u.cups.position.copy(off(top, 0.9, 0.55, 0)); scene.add(u.cups);
+    for (const a of [0, 120, 240]) { const arm = new THREE.Group(); arm.rotation.y = rad(a); u.cups.add(arm);
+      box(0.05, 0.05, 0.6, 0x282828, new THREE.Vector3(0, 0, 0.3), arm);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 10), lam(0x282828)), new THREE.Vector3(0, 0, 0.65), arm); }
+    // bồn
+    const tp = gp(TANK[0], TANK[1]);
+    box(6.6, 0.5, 7.2, 0x969696, off(tp, 0, 0.15, -0.3));
+    u.water = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 1, 24), lam(0x1e78eb));
+    u.waterBase = tp.y + 0.4; u.water.position.set(tp.x, u.waterBase, tp.z); scene.add(u.water);
+    cyl(2.6, 5, 0x96c3ff, off(tp, 0, 0.4, 0), null, { transparent: true, opacity: 0.34, depthWrite: false });
+    for (const ry of [1.5, 2.9, 4.3]) cyl(2.68, 0.16, 0x2369cd, off(tp, 0, ry, 0));
+    cyl(2.66, 0.25, 0x2369cd, off(tp, 0, 5.4, 0)); cyl(1.0, 0.15, DARK, off(tp, 0, 5.65, 0));
+    box(0.3, 1.6, 0.3, 0x8c8c8c, off(tp, -1.3, 1.1, -3.1));
+    add(new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 10), lam(0xc83228)), off(tp, -1.3, 1.7, -3.35));
+    // ống
+    u.inMat = lam(0x78828c); u.outMat = lam(0x78828c);
+    const groundPipe = (p0, p1, n, mat, support) => { const pts = [p0];
+      for (let k = 1; k <= n; k++) { const q = p0.clone().lerp(p1, k / (n + 1)); pts.push(gp(q.x, -q.z, 0.8));
+        if (support) box(0.2, 0.9, 0.2, 0x787878, gp(q.x, -q.z, 0.35)); }
+      pts.push(p1); for (let i = 0; i < pts.length - 1; i++) seg(pts[i], pts[i + 1], 0.2, mat); return pts; };
+    const pA = off(base, 0.5, 3.1, -0.3), pB = off(base, 0.5, 1.0, -0.3), pC = off(base, 0.5, 1.0, -1.9);
+    seg(pA, pB, 0.2, u.inMat); seg(pB, pC, 0.2, u.inMat);
+    const inPts = groundPipe(pC, off(tp, 0, 1.3, 2.6), 4, u.inMat, true);
+    const mid = gp(TANK[0], FZ[1] + 0.5, 0.5), endL = gp(FX[0] + 1, FZ[1] + 0.5, 0.5), endR = gp(FX[1] - 1, FZ[1] + 0.5, 0.5);
+    const outPts = groundPipe(off(tp, 0, 0.9, -2.7), mid, 2, u.outMat, false);
+    seg(endL, mid, 0.2, u.outMat); seg(mid, endR, 0.2, u.outMat);
+    // chấm nước chạy trong ống
+    u.inPath = makePath([pA, pB].concat(inPts)); u.inDrops = makeDrops(12, 0.36);
+    u.outPaths = [makePath(outPts.concat([endL])), makePath(outPts.concat([endR]))];
+    u.outDrops = [makeDrops(9, 0.34), makeDrops(4, 0.34)];
+    // tia nước tưới rơi xuống vườn
+    u.spray = makeDrops(60, 0.2);
+    u.spray.forEach(m => { m.userData = { x: FX[0] + 1 + Math.random() * (FX[1] - FX[0] - 2), z: FZ[0] + 1 + Math.random() * (FZ[1] - FZ[0] - 2.5), h: Math.random() * 3.2 }; });
+    // vườn dâu tây: luống đất, bụi lá, hoa trắng và quả đỏ (InstancedMesh cho nhẹ máy)
+    u.plantMat = lam(0x2f9e44); u.berryMat = lam(0xe0263c);
+    const r01 = mulberry32(11), ROWS = 7, COLS = 11, NP = ROWS * COLS, M4 = new THREE.Matrix4(), Q0 = new THREE.Quaternion(),
+      QDOWN = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI, 0, 0)), S3 = new THREE.Vector3();
+    const inst = (geo, mat, n) => { const m = new THREE.InstancedMesh(geo, mat, n); scene.add(m); return m; };
+    const put = (mesh, i, p, sx, sy, sz, q) => { M4.compose(p, q || Q0, S3.set(sx, sy, sz)); mesh.setMatrixAt(i, M4); };
+    const beds = inst(new THREE.BoxGeometry(2.6, 0.5, 1.7), lam(0x4a3426), NP);
+    const leaves = inst(new THREE.SphereGeometry(0.5, 8, 6), u.plantMat, NP * 4);
+    const flowers = inst(new THREE.SphereGeometry(0.1, 6, 5), new THREE.MeshBasicMaterial({ color: 0xffffff }), NP);
+    u.berries = inst(new THREE.ConeGeometry(0.21, 0.44, 7), u.berryMat, NP * 3);
+    const spots = [];
+    for (let b = 0; b < ROWS; b++) for (let a = 0; a < COLS; a++) {
+      const px = FX[0] + 1.5 + a * (FX[1] - FX[0] - 3) / (COLS - 1), pz = FZ[0] + 2 + b * (FZ[1] - FZ[0] - 5) / (ROWS - 1), i = b * COLS + a;
+      put(beds, i, gp(px, pz, 0.12), 1, 1, 1);
+      const k = 0.85 + r01() * 0.3, rot = r01() * 6.28;
+      put(leaves, i * 4, gp(px, pz, 0.72), 1.05 * k, 0.6 * k, 1.05 * k);
+      for (let j = 0; j < 3; j++) { const an = rot + j * 2.09; put(leaves, i * 4 + 1 + j, gp(px + Math.cos(an) * 0.48, pz + Math.sin(an) * 0.42, 0.56), 0.8 * k, 0.45 * k, 0.8 * k); }
+      put(flowers, i, gp(px + Math.cos(rot) * 0.2, pz + Math.sin(rot) * 0.2, 1.08), 1, 1, 1);
+      spots.push({ px: px, pz: pz, rot: rot });
+    }
+    // xếp quả theo lượt (mỗi cây 1 quả, rồi quả thứ 2, thứ 3) để khi cây yếu, quả rụng đều khắp vườn
+    for (let j = 0; j < 3; j++) spots.forEach((sp, i) => { const an = sp.rot + 1.05 + j * 2.09;
+      put(u.berries, j * NP + i, gp(sp.px + Math.cos(an) * 0.78, sp.pz - 0.25 + Math.sin(an) * 0.5, 0.5), 1, 1, 1, QDOWN); });
+    u.berryMax = NP * 3; u.fieldCam = gp(0, -2, 1);
+    // mũi tên hướng gió: dựng chỉ về -z (gió 0° thổi lên sống núi), xoay quanh trục đứng theo hướng gió
+    u.arrowMat = new THREE.MeshBasicMaterial({ color: 0x4fd8e6 });
+    u.arrow = new THREE.Group(); scene.add(u.arrow);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 4.6, 12), u.arrowMat); shaft.rotation.x = Math.PI / 2; shaft.position.z = 1.2; u.arrow.add(shaft);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.95, 2.2, 16), u.arrowMat); head.rotation.x = -Math.PI / 2; head.position.z = -2.1; u.arrow.add(head);
+    // vệt gió
+    u.streakMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false });
+    u.streaks = []; const sgeo = new THREE.BoxGeometry(0.14, 0.14, 1), rs = mulberry32(5);
+    for (let i = 0; i < 70; i++) { const m = new THREE.Mesh(sgeo, u.streakMat);
+      m.userData = { fx: NET_X - 32 + rs() * 64, fz: NET_Z - 30 + rs() * 56, fh: 1.5 + rs() * 10, k: 0.7 + rs() * 0.6 }; scene.add(m); u.streaks.push(m); }
+    u.anchors = { net: off(base, 0, 12.2, 0), tank: off(tp, 0, 7.0, 0), field: gp(0, (FZ[0] + FZ[1]) / 2, 3.5), wind: new THREE.Vector3() };
+    u.near = off(base, 4, 3, -6);
+    return u;
+  })();
+
+  // ---- sương
+  (function () {
+    const c = document.createElement("canvas"); c.width = c.height = 64; const g2 = c.getContext("2d");
+    const gr = g2.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(1, "rgba(255,255,255,0)");
+    g2.fillStyle = gr; g2.fillRect(0, 0, 64, 64);
+    fogMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), color: 0xebf0f5, transparent: true, opacity: 0, depthWrite: false });
+    const r = mulberry32(3);
+    for (let i = 0; i < 130; i++) { const sp = new THREE.Sprite(fogMat); const sc = 10 + r() * 10; sp.scale.set(sc, sc, 1);
+      sp.userData = { fx: -70 + r() * 140, fz: -45 + r() * 100, fh: 2.5 + r() * 8.5, k: 0.6 + r() * 0.7 }; scene.add(sp); fogSprites.push(sp); }
+  })();
+
+  // ---- điều khiển camera
+  let drag = null;
+  canvas.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointermove", e => { if (!drag) return;
+    cam.yaw += (e.clientX - drag.x) * 0.35; cam.pitch = clamp(cam.pitch + (e.clientY - drag.y) * 0.25, 8, 85); drag = { x: e.clientX, y: e.clientY }; });
+  const endDrag = () => { drag = null; };
+  canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
+  canvas.addEventListener("wheel", e => { e.preventDefault(); cam.zoom = clamp(cam.zoom * (e.deltaY > 0 ? 1.1 : 0.9), 0.3, 2.2); }, { passive: false });
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+  $("zIn").onclick = () => { cam.zoom = clamp(cam.zoom * 0.85, 0.3, 2.2); };
+  $("zOut").onclick = () => { cam.zoom = clamp(cam.zoom * 1.18, 0.3, 2.2); };
+  $("camNear").onclick = () => { cam.target.copy(U.near); cam.zoom = 0.45; cam.yaw = 18; cam.pitch = 20; };
+  $("camField").onclick = () => { cam.target.copy(U.fieldCam); cam.zoom = 0.36; cam.yaw = -14; cam.pitch = 27; };
+  $("camFar").onclick = () => { cam.target.copy(CAM_FAR); cam.zoom = 1; cam.yaw = 0; cam.pitch = 37; };
+} else {
+  view.innerHTML = '<div class="noweb">Trình duyệt này không bật được đồ hoạ 3D (WebGL). Các bảng số liệu bên cạnh vẫn chạy bình thường.</div>';
+}
+
+function placeCamera() {
+  const w = view.clientWidth, h = view.clientHeight;
+  if (canvas.width !== Math.floor(w * renderer.getPixelRatio()) || canvas.height !== Math.floor(h * renderer.getPixelRatio())) renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  const vf = rad(camera.fov), hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
+  const dist = 33 / Math.sin(Math.min(vf, hf) / 2) * cam.zoom, p = rad(cam.pitch), y = rad(cam.yaw);
+  camera.position.set(cam.target.x - Math.sin(y) * Math.cos(p) * dist, cam.target.y + Math.sin(p) * dist, cam.target.z + Math.cos(y) * Math.cos(p) * dist);
+  camera.lookAt(cam.target);
+}
+const tags = { net: $("tagNet"), tank: $("tagTank"), field: $("tagField"), wind: $("tagWind") };
+const tmpV = renderer ? new THREE.Vector3() : null;
+function placeTag(el, v3) {
+  const p = tmpV.copy(v3).project(camera), w = view.clientWidth, h = view.clientHeight;
+  el.hidden = p.z > 1; el.style.left = ((p.x + 1) / 2 * w).toFixed(1) + "px"; el.style.top = ((1 - p.y) / 2 * h).toFixed(1) + "px";
+}
+const mixColor = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t);
+let animT = 0, tagTimer = 1;
+function render3D(dt) {
+  const s = G.sim; animT += dt;
+  U.pivot.rotation.y = -rad(s.netYaw); U.vane.rotation.y = -rad(s.windDir); U.cups.rotation.y += s.windSpeed * dt * 1.2;
+  const wet = s.protecting ? 0 : Math.min(1, D.harvest / 25), flowing = !s.protecting && D.harvest > 0.5, irrigating = s.irrigationLph > 0;
+  U.netMat.color.copy(mixColor(0x1e5f7d, 0x46befa, wet));
+  U.inMat.color.copy(mixColor(0x78828c, 0x3caaff, wet));
+  U.outMat.color.set(irrigating ? 0x3caaff : 0x78828c);
+  const wh = Math.max(0.02, s.frac * 4.9); U.water.scale.y = wh; U.water.position.y = U.waterBase + wh / 2;
+  U.led.material.color.set(s.protecting ? 0xff961e : flowing ? 0x50e66e : 0x5a5a5a);
+  U.plantMat.color.copy(mixColor(0x8a6a3a, 0x2f9e44, s.health / 100));
+  U.berries.count = Math.round(U.berryMax * clamp((s.health - 25) / 60, 0, 1));   // cây yếu thì quả ít dần
+  // gió: mũi tên đứng phía đầu gió của lưới, vệt trắng trôi theo gió
+  const a = rad(s.windDir), wx = Math.sin(a), wz = Math.cos(a), strong = s.windSpeed > P.WIND_PROTECT_ON;
+  U.arrow.position.set(U.base.x - wx * 12, U.base.y + 7.2, U.base.z + wz * 12); U.arrow.rotation.y = -a;
+  const asc = clamp(0.75 + D.wind / 12, 0.75, 1.9); U.arrow.scale.set(asc, asc, asc);
+  U.arrowMat.color.set(strong ? 0xf5b950 : 0x4fd8e6);
+  U.anchors.wind.set(U.arrow.position.x, U.arrow.position.y + 2.4, U.arrow.position.z);
+  U.streakMat.opacity = clamp(0.2 + D.wind / 14, 0.2, 0.8); U.streakMat.color.set(strong ? 0xffd9a0 : 0xffffff);
+  const sv = (1.5 + D.wind * 2.4) * dt, slen = 1.6 + D.wind * 0.55;
+  for (const m of U.streaks) { const d = m.userData; d.fx += wx * sv * d.k; d.fz += wz * sv * d.k;
+    if (d.fx > NET_X + 32) d.fx -= 64; if (d.fx < NET_X - 32) d.fx += 64; if (d.fz > NET_Z + 26) d.fz -= 56; if (d.fz < NET_Z - 30) d.fz += 56;
+    m.position.set(d.fx, ground(d.fx, d.fz) + d.fh, -d.fz); m.rotation.y = -a; m.scale.z = slen * d.k; }
+  // nước: giọt trên lưới -> chấm chạy trong ống -> tia tưới
+  const nNet = flowing ? Math.max(8, Math.round(wet * U.netDrops.length)) : 0;
+  U.netDrops.forEach((m, i) => { m.visible = i < nNet; if (!m.visible) return;
+    m.position.y -= m.userData.v * dt; if (m.position.y < -3.2) { m.position.y = 3; m.position.x = (i % 2 ? 1 : -1) * (0.4 + Math.random() * 5.1); } });
+  const nIn = flowing ? Math.max(4, Math.round(wet * U.inDrops.length)) : 0;
+  U.inDrops.forEach((m, i) => { m.visible = i < nIn; if (m.visible) pathAt(U.inPath, ((i / nIn + animT * 0.22) % 1) * U.inPath.len, m.position); });
+  U.outDrops.forEach((arr, k) => arr.forEach((m, i) => { m.visible = irrigating; const p = U.outPaths[k];
+    if (m.visible) pathAt(p, ((i / arr.length + animT * 0.2 + k * 0.06) % 1) * p.len, m.position); }));
+  U.spray.forEach(m => { m.visible = irrigating; if (!m.visible) return; const d = m.userData; d.h -= 3.4 * dt;
+    if (d.h < 0) { d.h = 3.2; d.x = FX[0] + 1 + Math.random() * (FX[1] - FX[0] - 2); d.z = FZ[0] + 1 + Math.random() * (FZ[1] - FZ[0] - 2.5); }
+    m.position.set(d.x, ground(d.x, d.z) + 1.2 + d.h, -d.z); });
+  // sương
+  const dens = s.lwc / P.LWC_MAX, v = s.windSpeed * 0.9 * dt, dx = wx * v, dz = wz * v;
+  fogMat.opacity = 0.34 * dens;
+  for (const sp of fogSprites) { const d = sp.userData; d.fx += dx * d.k; d.fz += dz * d.k;
+    if (d.fx > 70) d.fx -= 140; if (d.fx < -70) d.fx += 140; if (d.fz > 55) d.fz -= 100; if (d.fz < -45) d.fz += 100;
+    sp.position.set(d.fx, ground(d.fx, d.fz) + d.fh, -d.fz); }
+  // ngày đêm
+  const day = clamp(0.5 + 0.75 * Math.sin(2 * Math.PI * (s.hour - 6) / 24), 0, 1);
+  scene.background = mixColor(0x182038, 0x8cbee8, day).lerp(mixColor(0x464e5c, 0xcdd4da, day), dens * 0.85);
+  sun.intensity = 0.25 + 0.7 * day; amb.intensity = 0.38 + 0.25 * day;
+  placeCamera();
+  // chữ trên nhãn chỉ đổi 4 lần/giây và có bề rộng cố định -> nhãn không rung
+  tagTimer += dt || 0.016;
+  if (tagTimer >= 0.25) { tagTimer = 0;
+    setT(tags.net, s.protecting ? "Lưới né gió mạnh" : "Lưới");
+    tags.net.className = "tag" + (s.protecting ? " warn" : "");
+    setT(tags.tank, "Bồn"); setT(tags.field, "Vườn dâu tây"); setT(tags.wind, "Gió");
+    tags.wind.className = "tag " + (strong ? "warn" : "wind"); }
+  placeTag(tags.net, U.anchors.net); placeTag(tags.tank, U.anchors.tank); placeTag(tags.field, U.anchors.field); placeTag(tags.wind, U.anchors.wind);
+  renderer.render(scene, camera);
+}
+
+/* ---- vòng lặp chính ---- */
+let last = performance.now(), uiTimer = 1;
+function frame(now) {
+  requestAnimationFrame(frame);          // đặt lịch khung kế tiếp TRƯỚC, để một lỗi lẻ không làm cả trang đứng hình
+  if (tour.on) tourPlace();              // khung khoanh vùng luôn bám theo mục tiêu khi trang cuộn hoặc bảng mở ra
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  if (!G.paused) { G.acc += dt * G.speed; const steps = Math.min(Math.floor(G.acc), 240); G.acc -= Math.floor(G.acc);
+    for (let i = 0; i < steps; i++) { G.sim.step(1);
+      if (G.sim.t % HIST_STEP === 0) { G.hist.push(G.sim.level); if (G.hist.length > HIST_MAX) G.hist.shift(); } } }
+  // làm mượt số hiển thị (~0,4 giây) để mắt kịp đọc
+  const s = G.sim, k = 1 - Math.exp(-dt * 2.5);
+  D.wind += (s.windSpeed - D.wind) * k; D.rh += (s.rh - D.rh) * k; D.temp += (s.temp - D.temp) * k;
+  D.harvest += (s.harvestLph - D.harvest) * k; D.irr += (s.irrigationLph - D.irr) * k;
+  if (renderer) render3D(G.paused ? 0 : dt);
+  uiTimer += dt; if (uiTimer >= 0.3) { uiTimer = 0; updateUI(); }
+}
+refreshButtons(); showTab("hist", true); updateUI(); requestAnimationFrame(frame);
+let tourSeen = false; try { tourSeen = localStorage.getItem("aeroaqua_tour_seen") === "1"; } catch (e) {}
+if (!tourSeen) tourGo(0);
+</script>
+
+</body>
+</html>
