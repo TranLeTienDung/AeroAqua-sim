@@ -4,6 +4,8 @@
 
 Dự án gồm hai dạng: **mô phỏng 3D bằng Python** (Ursina) và **phiên bản web** chạy trực tiếp trên trình duyệt.
 
+> 🌐 **Dùng thử bản web ngay:** https://snazzy-lebkuchen-8fd9cb.netlify.app/
+
 ---
 
 ## ✨ Tính năng mô phỏng
@@ -73,9 +75,13 @@ python simulation.py
 
 ---
 
-## 🌐 Chạy bản web
+## 🌐 Bản web (demo trực tiếp)
 
-Mở trực tiếp `web/index.html` bằng trình duyệt, hoặc chạy một máy chủ tĩnh:
+👉 **Truy cập ngay tại:** https://snazzy-lebkuchen-8fd9cb.netlify.app/
+
+Không cần cài đặt gì — chỉ cần mở link trên trình duyệt.
+
+Hoặc chạy bản web ở máy từ mã nguồn trong `web/`:
 
 ```bash
 cd web
